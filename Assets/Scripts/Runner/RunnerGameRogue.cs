@@ -49,6 +49,7 @@ public partial class RunnerGame
     {
         if (n <= 0) return;
         if (HasRelic("oleo")) n *= 2;
+        if (stats.siclosMul != 1f) n = Mathf.Max(1, Mathf.RoundToInt(n * stats.siclosMul));
         siclos += n;
         Sfx("moeda", 0.45f, 0.08f, 0.06f);
         if (at.HasValue) AddFloat(at.Value, "+" + n + " siclo" + (n > 1 ? "s" : ""), new Color(1f, 0.85f, 0.3f), false);
@@ -73,6 +74,7 @@ public partial class RunnerGame
         if (r == null || relics.Contains(r.id)) return;
         relics.Add(r.id);
         relicList.Add(r);
+        Meta.MarkSeen("relic", r.id);
         if (r.onGain != null) r.onGain(this);
         maxLives = Mathf.Clamp(maxLives, 1, hardMaxLives);
         lives = Mathf.Min(lives, maxLives);
@@ -130,7 +132,7 @@ public partial class RunnerGame
 
     float BossHpMul()
     {
-        float m = 1f;
+        float m = 1.1f;
         if (HasRelic("shofar")) m *= 0.8f;
         if (Meta.OathOn("anaque")) m *= 1.5f;
         return m;
@@ -160,6 +162,7 @@ public partial class RunnerGame
         public Color color = Color.white;
         public bool enabled = true;
         public System.Action act;
+        public RunnerCard card;   // se for uma carta, mostra o ícone
     }
 
     string choiceTitle = "", choiceSub = "";
@@ -238,10 +241,10 @@ public partial class RunnerGame
     void DrawChoice(float s, float W, float H)
     {
         Box(new Rect(0, 0, W, H), new Color(0.03f, 0.02f, 0.01f, 0.75f));
-        ShadowLabel(new Rect(0, H * 0.07f, W, 80 * s), choiceTitle, new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(60 * s) }, choiceColor);
-        ShadowLabel(new Rect(W * 0.08f, H * 0.07f + 72 * s, W * 0.84f, 70 * s), choiceSub, new GUIStyle(midStyle) { wordWrap = true, fontSize = Mathf.RoundToInt(28 * s) }, Color.white);
+        ShadowLabel(new Rect(0, H * 0.07f, W, 80 * s), choiceTitle, Sty(bigStyle, fs: Mathf.RoundToInt(60 * s)), choiceColor);
+        ShadowLabel(new Rect(W * 0.08f, H * 0.07f + 72 * s, W * 0.84f, 70 * s), choiceSub, Sty(midStyle, ww: 1, fs: Mathf.RoundToInt(28 * s)), Color.white);
         ShadowLabel(new Rect(0, H * 0.07f + 138 * s, W, 40 * s), "Siclos: " + siclos + "   •   Vidas: " + lives + "/" + maxLives + "   •   Relíquias: " + relicList.Count,
-            new GUIStyle(cardSmall), new Color(1f, 0.85f, 0.35f));
+            Sty(cardSmall), new Color(1f, 0.85f, 0.35f));
 
         int n = choiceOpts.Count;
         float cw = 330 * s, ch = 380 * s, gap = 28 * s;
@@ -254,9 +257,9 @@ public partial class RunnerGame
         float cs = cw / 330f;
         float maxH = H * 0.5f;
         if (ch > maxH) { float k2 = maxH / ch; cw *= k2; ch *= k2; gap *= k2; cs *= k2; totalW = n * cw + (n - 1) * gap; }
-        var title = new GUIStyle(cardTitle) { fontSize = Mathf.RoundToInt(30 * cs), wordWrap = true };
-        var desc = new GUIStyle(cardDesc) { fontSize = Mathf.RoundToInt(23 * cs), wordWrap = true };
-        var small = new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(20 * cs) };
+        var title = Sty(cardTitle, fs: Mathf.RoundToInt(30 * cs), ww: 1);
+        var desc = Sty(cardDesc, fs: Mathf.RoundToInt(23 * cs), ww: 1);
+        var small = Sty(cardSmall, fs: Mathf.RoundToInt(20 * cs));
         float x0 = W / 2 - totalW / 2, y0 = H * 0.33f;
         choiceRects.Clear();
 
@@ -284,6 +287,12 @@ public partial class RunnerGame
             var band = new Rect(inner.x, inner.y, inner.width, 40 * cs);
             Box(band, new Color(rc.r * 0.45f, rc.g * 0.45f, rc.b * 0.45f));
             ShadowLabel(band, o.tag, small, Color.white);
+            if (o.card != null)
+            {
+                float isz = 64 * cs;
+                CardIcons.Draw(new Rect(inner.center.x - isz / 2, band.yMax + 4 * cs, isz, isz), o.card);
+                inner.y += 58 * cs; inner.height -= 58 * cs;   // empurra nome e texto para baixo
+            }
             ShadowLabel(new Rect(inner.x + 8 * cs, inner.y + 48 * cs, inner.width - 16 * cs, 86 * cs), o.name, title, rc);
             Box(new Rect(inner.x + 30 * cs, inner.y + 138 * cs, inner.width - 60 * cs, 2 * cs), new Color(rc.r, rc.g, rc.b, 0.5f));
             ShadowLabel(new Rect(inner.x + 14 * cs, inner.y + 150 * cs, inner.width - 28 * cs, inner.height - 196 * cs), o.desc, desc, o.enabled ? new Color(0.93f, 0.92f, 0.88f) : new Color(0.6f, 0.6f, 0.6f));
@@ -346,8 +355,8 @@ public partial class RunnerGame
     {
         var all = new List<ChoiceOpt>
         {
-            Opt("CAMINHO • Dt 8:2", "O Deserto da Provação", "Inimigos mais fortes até o próximo chefe, mas +30% de pontos e +15 siclos ao chegar nele.", new Color(1f, 0.6f, 0.25f),
-                () => { currentPath = "deserto"; pathThreat = 0.5f; pathScoreBonus = 0.3f; stats.scoreMul += 0.3f; Banner("O DESERTO DA PROVAÇÃO", "\"Para te humilhar e te provar\" (Dt 8:2)"); }),
+            Opt("CAMINHO • Dt 8:2", "O Deserto da Provação", "Inimigos mais fortes e 1 praga no baralho, mas +30% de pontos e +15 siclos ao chegar no chefe.", new Color(1f, 0.6f, 0.25f),
+                () => { currentPath = "deserto"; pathThreat = 0.5f; pathScoreBonus = 0.3f; stats.scoreMul += 0.3f; AddPlague("praga_ras"); Banner("O DESERTO DA PROVAÇÃO", "\"Para te humilhar e te provar\" (Dt 8:2)  —  uma praga de rãs entrou no baralho"); }),
             Opt("CAMINHO • Êx 15:27", "O Oásis de Elim", "Doze fontes e setenta palmeiras: cura total, escudo pronto e um trecho mais calmo.", new Color(0.4f, 0.9f, 0.8f),
                 () => { currentPath = "oasis"; lives = maxLives; shieldReady = true; pathThreat = -0.3f; Banner("O OÁSIS DE ELIM", "\"Doze fontes de água e setenta palmeiras\" (Êx 15:27)"); }),
             Opt("CAMINHO • 1Rs 6", "O Templo de Salomão", "Gaste seus siclos: cura, cartas, relíquias e bênçãos.", new Color(1f, 0.85f, 0.35f),
@@ -390,10 +399,12 @@ public partial class RunnerGame
                 () => { siclos -= 8; Heal(1); OpenShop(); }, siclos >= 8 && lives < maxLives),
             Opt("20 SICLOS", "Rolo dos Profetas", "Escolha uma carta rara, épica ou lendária.", new Color(0.7f, 0.5f, 1f),
                 () => { siclos -= 20; shopBought.Add("rolo"); OfferGoodCard("ROLO DOS PROFETAS", "Escolha uma carta", OpenShop); }, siclos >= 20 && !shopBought.Contains("rolo")),
+            Opt("15 SICLOS", "Pergaminho", "Escolha 1 de 3 cartas da sua coleção: ela entra 2x no baralho desta jornada.", new Color(0.55f, 0.45f, 0.9f),
+                () => { siclos -= 15; shopBought.Add("pergaminho"); OpenScrollShop(OpenShop); }, siclos >= 15 && !shopBought.Contains("pergaminho")),
             Opt("35 SICLOS", "Tesouro do Templo", "Escolha uma relíquia.", gold,
                 () => { siclos -= 35; shopBought.Add("reliquia"); OpenRelicChoice("TESOURO DO TEMPLO", "Escolha uma relíquia", OpenShop); }, siclos >= 35 && !shopBought.Contains("reliquia")),
-            Opt("12 SICLOS", "Azeite da Unção", "+10% de dano pelo resto da jornada. (Sl 23:5)", new Color(0.9f, 0.9f, 0.4f),
-                () => { siclos -= 12; shopBought.Add("azeite"); stats.damageMul += 0.1f; OpenShop(); }, siclos >= 12 && !shopBought.Contains("azeite")),
+            Opt("18 SICLOS", "Azeite da Unção", "Unja uma carta do seu baralho: sempre que você a escolher, ela vale em dobro. (Sl 23:5)", new Color(0.9f, 0.9f, 0.4f),
+                () => { siclos -= 18; shopBought.Add("azeite"); OpenAnoint(OpenShop); }, siclos >= 18 && !shopBought.Contains("azeite")),
             Opt("SAIR", "Seguir Viagem", "Deixar o Templo e voltar à estrada.", new Color(0.5f, 0.55f, 0.6f), null),
         };
         OpenChoice("O TEMPLO DE SALOMÃO", "\"A minha casa será chamada casa de oração\" (Is 56:7)  —  ofertas compradas com siclos", gold, opts);
@@ -416,6 +427,8 @@ public partial class RunnerGame
                 () => { siclos -= 20; OpenRelicChoice("A OFERTA FOI ACEITA", "Escolha uma relíquia", null); }, siclos >= 20),
             Opt("HOLOCAUSTO", "Queimar Metade dos Pontos", "Perca metade dos pontos de abates. +20% de dano permanente.", new Color(1f, 0.55f, 0.2f),
                 () => { killScore /= 2; stats.damageMul += 0.2f; Banner("HOLOCAUSTO", "\"Aroma agradável ao Senhor\" (Lv 1:9)  —  +20% de dano"); }, killScore > 1000),
+            Opt("FOGO", "Queimar uma Carta", "Tire uma carta do baralho desta jornada para sacar mais as outras. +5 siclos.", new Color(1f, 0.45f, 0.2f),
+                () => OpenBurnCard(null), DeckTotal > Deck.MinSize / 2),
             Opt("RECUSAR", "Deus Proverá", "Não oferecer nada. Você encontra um carneiro preso no mato: +5 siclos. (Gn 22:13)", new Color(0.5f, 0.55f, 0.6f),
                 () => AddSiclos(5)),
         };
@@ -454,16 +467,16 @@ public partial class RunnerGame
             case 2:
                 OpenChoice("O PRATO DE LENTILHAS", "Esaú chega faminto do campo e oferece um negócio. (Gn 25:34)", purple, new List<ChoiceOpt>
                 {
-                    Opt("+40 SICLOS", "Vender a Primogenitura", "Ganhe 40 siclos agora, mas perca 20% dos pontos pelo resto da jornada.", red,
-                        () => { siclos += 40; stats.scoreMul = Mathf.Max(0.3f, stats.scoreMul - 0.2f); }),
+                    Opt("+40 SICLOS", "Vender a Primogenitura", "Ganhe 40 siclos agora, mas perca 20% dos pontos e uma praga de gafanhotos entra no baralho.", red,
+                        () => { siclos += 40; stats.scoreMul = Mathf.Max(0.3f, stats.scoreMul - 0.2f); AddPlague("praga_gafanhotos"); }),
                     Opt("+1 VIDA", "Comer e Seguir", "Só a sopa: recupera 1 vida.", green, () => Heal(1)),
                 });
                 break;
             case 3:
                 OpenChoice("O BEZERRO DE OURO", "O povo dança diante de um ídolo de ouro aos pés do Sinai. (Êx 32:19)", purple, new List<ChoiceOpt>
                 {
-                    Opt("TENTAÇÃO", "Pegar o Ouro", "+35 siclos, mas o caminho fica mais perigoso até o próximo chefe.", red,
-                        () => { siclos += 35; eventThreat += 0.5f; Banner("O OURO PESA", "A ameaça aumentou até o próximo chefe"); }),
+                    Opt("TENTAÇÃO", "Pegar o Ouro", "+35 siclos, mas um Ídolo de Ouro entra no baralho (-10% de dano até você queimá-lo).", red,
+                        () => { siclos += 35; AddPlague("idolo"); Banner("O OURO PESA", "Um ídolo entrou no seu baralho  —  queime-o no altar"); }),
                     Opt("ZELO", "Moer o Ídolo", "Reduza-o a pó, como Moisés: +15% de dano. (Êx 32:20)", gold,
                         () => { stats.damageMul += 0.15f; Banner("O ÍDOLO VIROU PÓ", "+15% de dano (Êx 32:20)"); }),
                 });
@@ -541,7 +554,7 @@ public partial class RunnerGame
         var coin = new Rect(26 * s, y + 4 * s, 22 * s, 22 * s);
         Box(coin, new Color(0.55f, 0.4f, 0.1f));
         Box(new Rect(coin.x + 3 * s, coin.y + 3 * s, coin.width - 6 * s, coin.height - 6 * s), new Color(1f, 0.82f, 0.3f));
-        ShadowLabel(new Rect(coin.xMax + 8 * s, y, 200 * s, 30 * s), siclos.ToString(), new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(24 * s) }, new Color(1f, 0.88f, 0.45f));
+        ShadowLabel(new Rect(coin.xMax + 8 * s, y, 200 * s, 30 * s), siclos.ToString(), Sty(cardSmall, al: TextAnchor.MiddleLeft, fs: Mathf.RoundToInt(24 * s)), new Color(1f, 0.88f, 0.45f));
 
         // relíquias como ícones coloridos (nome completo na pausa)
         float x = 26 * s;

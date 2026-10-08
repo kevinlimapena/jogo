@@ -438,9 +438,9 @@ public class RunnerBabel : MonoBehaviour
         // areia voando
         if (Mathf.Abs(Wind) > 1f && Random.value < (Application.isMobilePlatform ? 0.35f : 0.7f))
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.GetComponent<Renderer>().sharedMaterial = g.Mat(new Color(0.9f, 0.78f, 0.55f));
+            MeshRenderer goR;
+            var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+            goR.sharedMaterial = g.Mat(new Color(0.9f, 0.78f, 0.55f));
             go.transform.position = W(new Vector2(-Mathf.Sign(Wind) * (halfW + 6f), camY + Random.Range(-9f, 9f)), Random.Range(-3f, -1f));
             go.transform.localScale = new Vector3(Random.Range(0.6f, 1.6f), 0.05f, 0.05f);
             var d = go.AddComponent<RunnerDebris>();
@@ -561,7 +561,7 @@ public class RunnerBabel : MonoBehaviour
         brickCd -= dt;
         if (brickCd <= 0f)
         {
-            float rate = 1f + tier * 0.2f + g.LevelThreat * 0.15f + (Style == 0 ? 0.15f : 0f);
+            float rate = 1f + tier * 0.2f + g.ThreatSoft * 0.15f + (Style == 0 ? 0.15f : 0f);
             brickCd = Random.Range(1.8f, 2.8f) / rate;
             float x = Mathf.Clamp(pos.x + Random.Range(-3f, 3f), -halfW, halfW);
             SpawnBrick(new Vector2(x, camY + 12f), new Vector2(Wind * 0.5f, -4f));
@@ -618,9 +618,9 @@ public class RunnerBabel : MonoBehaviour
             {
                 fireCd = Mathf.Max(0.12f, st.Cooldown * 1.4f);
                 var dir = (target.Value - from).normalized;
-                var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                Destroy(go.GetComponent<Collider>());
-                go.GetComponent<Renderer>().sharedMaterial = g.Glow(st.weapon.color);
+                MeshRenderer goR;
+                var go = RunnerGame.NewPrim(PrimitiveType.Sphere, out goR, false);
+                goR.sharedMaterial = g.Glow(st.weapon.color);
                 go.transform.SetParent(root, false);
                 go.transform.localScale = Vector3.one * 0.3f;
                 shots.Add(new Shot { t = go.transform, pos = from, vel = dir * 26f });

@@ -85,7 +85,7 @@ public class RunnerGoliath : MonoBehaviour
         Stones = StonesMax;
         goliathZ = origin.z + 42f;
         goliathX = 0f;
-        walkSpeed = 1.6f + Mathf.Min(tier, 4) * 0.25f + g.LevelThreat * 0.2f;
+        walkSpeed = 1.6f + Mathf.Min(tier, 4) * 0.25f + g.ThreatSoft * 0.2f;
         t = 0f;
         fallT = 0f;
         loseT = 0f;
@@ -351,9 +351,9 @@ public class RunnerGoliath : MonoBehaviour
         hit += new Vector3(dev.x, dev.y, 0f);
         hit.x += Wind * Mathf.Clamp01(dz / 40f) * 0.9f;
 
-        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        Destroy(go.GetComponent<Collider>());
-        go.GetComponent<Renderer>().sharedMaterial = g.Mat(new Color(0.7f, 0.68f, 0.62f));
+        MeshRenderer goR;
+        var go = RunnerGame.NewPrim(PrimitiveType.Sphere, out goR, false);
+        goR.sharedMaterial = g.Mat(new Color(0.7f, 0.68f, 0.62f));
         go.transform.SetParent(root, false);
         go.transform.localScale = Vector3.one * 0.16f;
         var start = cam.transform.position + cam.transform.right * 0.4f - cam.transform.up * 0.2f + cam.transform.forward * 0.7f;

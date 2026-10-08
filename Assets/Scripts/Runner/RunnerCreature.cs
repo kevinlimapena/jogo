@@ -217,6 +217,7 @@ public class RunnerWeaponModel : MonoBehaviour
     [HideInInspector] public Transform muzzle;
 
     Transform gun;
+    Transform display;            // só visual: segura a arma por cima do cavalo (o tiro continua saindo do mesmo lugar)
     Transform spinner;
     GameObject[] flashes = new GameObject[0];
     float recoil;
@@ -299,7 +300,20 @@ public class RunnerWeaponModel : MonoBehaviour
         restRot = Quaternion.identity;
 
         gun = new GameObject("Gun").transform;
-        gun.SetParent(transform, false);
+        Transform holder = transform;
+        if (followPlayerWeapon)
+        {
+            // a arma do jogador fica visível por cima das costas, do lado direito
+            if (display == null)
+            {
+                display = new GameObject("WeaponDisplay").transform;
+                display.SetParent(transform, false);
+            }
+            display.localPosition = DisplayOffset(id);
+            display.localRotation = Quaternion.identity;
+            holder = display;
+        }
+        gun.SetParent(holder, false);
 
         var dark = new Color(0.2f, 0.2f, 0.24f);
         var metal = new Color(0.45f, 0.47f, 0.52f);
@@ -450,8 +464,16 @@ public class RunnerWeaponModel : MonoBehaviour
                 break;
         }
 
+        // inclinação de descanso (espada um pouco para cima, martelo no ombro)
+        if (followPlayerWeapon && meleeKind.Length > 0)
+        {
+            restRot = Quaternion.Euler(meleeKind == "martelo" ? -30f : (meleeKind == "lanca" ? -8f : -18f), 0f, 0f);
+            gun.localRotation = restRot;
+        }
+
+        // o ponto de onde sai o tiro NÃO muda (fica no suporte original): a jogabilidade continua igual
         muzzle = new GameObject("Muzzle").transform;
-        muzzle.SetParent(gun, false);
+        muzzle.SetParent(transform, false);
         muzzle.localPosition = muzzleLocal;
 
         flashes = new GameObject[flashPoints.Count];
@@ -461,6 +483,20 @@ public class RunnerWeaponModel : MonoBehaviour
             f.name = "Flash";
             f.SetActive(false);
             flashes[i] = f;
+        }
+    }
+
+    /// Onde a arma aparece em cima do cavalo (só visual).
+    static Vector3 DisplayOffset(string id)
+    {
+        switch (id)
+        {
+            case "espada": return new Vector3(0.38f, 0.5f, 0f);
+            case "lanca": return new Vector3(0.36f, 0.45f, -0.2f);
+            case "martelo": return new Vector3(0.38f, 0.5f, -0.15f);
+            case "arco": return new Vector3(0f, 0.55f, 0f);
+            case "duplas": return new Vector3(0f, 0.45f, 0f);
+            default: return new Vector3(0.3f, 0.48f, 0f);
         }
     }
 

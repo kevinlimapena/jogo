@@ -359,6 +359,20 @@ public class RunnerMusic : MonoBehaviour
         }
     }
 
+    /// BPM da faixa que está tocando (0 se nada toca).
+    public float Bpm => cur != null && cur.isPlaying && curId != null && Composer.Tracks.ContainsKey(curId) ? Composer.Tracks[curId].bpm : 0f;
+
+    /// Posição em batidas da faixa atual (a faixa começa numa batida). -1 se nada toca.
+    public double BeatPos
+    {
+        get
+        {
+            float bpm = Bpm;
+            if (bpm <= 0f || cur.clip == null) return -1;
+            return cur.timeSamples / (double)Synth.SR * bpm / 60.0;
+        }
+    }
+
     /// Qual faixa deve tocar agora (o jogo chama todo frame). duckMul abaixa o volume (pausa).
     public void Want(string id, float duckMul)
     {
@@ -469,6 +483,12 @@ public class RunnerSfx : MonoBehaviour
         });
         Add("escudo", 0.6f, b => { Synth.Bell(b, 0, Synth.Hz(D + 12), 0.5f, 0.4f, false); Synth.Bell(b, (int)(Synth.SR * 0.08f), Synth.Hz(D + 19), 0.5f, 0.35f, false); });
         Add("po", 0.5f, b => { for (int k = 0; k < 7; k++) Synth.Whoosh(b, (int)(Synth.SR * k * 0.05f), 0.1f, 400f, 1500f, 0.5f, 0.1f, r); });
+        // --- ritmo e impacto
+        Add("impacto", 0.5f, b => { Synth.Hit(b, 0, Synth.Drum.War, 1f, false, r); Synth.Sweep(b, 0, 0.35f, 140f, 40f, 0.7f, 0f); });
+        Add("emboscada", 1.0f, b =>
+        {
+            for (int k = 0; k < 6; k++) Synth.Hit(b, (int)(Synth.SR * k * 0.09f), k == 5 ? Synth.Drum.War : Synth.Drum.Doum, 0.5f + k * 0.08f, false, r);
+        });
         Add("pisao", 0.6f, b => { Synth.Hit(b, 0, Synth.Drum.War, 1f, false, r); Synth.Whoosh(b, 0, 0.35f, 800f, 150f, 0.6f, 0.05f, r); });
         Add("laminas", 0.25f, b => Synth.Whoosh(b, 0, 0.22f, 1500f, 4500f, 0.4f, 0.5f, r));
 

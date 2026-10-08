@@ -372,6 +372,7 @@ public partial class RunnerGame
             return;
         }
         jerichosCleared++;
+        UnlockThemeCard("jerico");   // Trombetas de Jericó entram na coleção
         int pts = Mathf.RoundToInt((1200 + jeriBest * 60) * (1 + jerichosCleared * 0.4f + jeriStyle * 0.25f) * stats.scoreMul);
         killScore += pts;
         Heal(1);
@@ -395,10 +396,10 @@ public partial class RunnerGame
         Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01((float)jeriPassed / totalBeats), bar.height), new Color(1f, 0.75f, 0.35f));
         for (int k = 1; k < JeriLaps; k++) Box(new Rect(bar.x + bar.width * k / JeriLaps - 1, bar.y, 2, bar.height), new Color(0, 0, 0, 0.6f));
         string txt = "JERICÓ — " + JerichoStyles[jeriStyle] + "   •   volta " + JeriLap + "/" + JeriLaps + "   •   ritmo " + Mathf.RoundToInt(JeriAccuracy * 100) + "%" + (jeriCombo > 1 ? "   •   combo x" + jeriCombo : "");
-        ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), txt, new GUIStyle(cardSmall), Color.white);
+        ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), txt, Sty(cardSmall), Color.white);
         ShadowLabel(new Rect(0, bar.y + bh + 34 * s, W, 40 * s),
             jeriStyle == 1 ? "Fique na faixa das trombetas  •  desvie dos ídolos escuros  •  60% para derrubar o muro" : "Fique na faixa das trombetas quando passarem  •  60% de ritmo para derrubar o muro",
-            new GUIStyle(cardSmall), new Color(1f, 0.85f, 0.6f));
+            Sty(cardSmall), new Color(1f, 0.85f, 0.6f));
         // pulso da batida
         float r = (30 + 14 * Mathf.Clamp01(jeriPulse)) * s;
         Box(new Rect(W / 2 - r / 2, bar.y + bh + 80 * s, r, r), new Color(1f, 0.8f, 0.35f, 0.3f + 0.6f * Mathf.Clamp01(jeriPulse)));
@@ -452,6 +453,7 @@ public partial class RunnerGame
         int style = goliathGame.Style;
         EndGoliath();
         goliathsCleared++;
+        UnlockThemeCard("funda");    // Funda de Davi entra na coleção
         bool oneStone = throwsUsed <= 1;
         int pts = Mathf.RoundToInt(1500 * (1 + goliathsCleared * 0.5f + style * 0.25f) * (oneStone ? 1.5f : 1f) * stats.scoreMul);
         killScore += pts;
@@ -478,14 +480,14 @@ public partial class RunnerGame
     void DrawGoliathHUD(float s, float W, float H)
     {
         var gg = goliathGame;
-        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), "DAVI E GOLIAS  —  " + RunnerGoliath.StyleNames[gg.Style], new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(32 * s) }, new Color(0.75f, 0.95f, 0.55f));
+        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), "DAVI E GOLIAS  —  " + RunnerGoliath.StyleNames[gg.Style], Sty(midStyle, fs: Mathf.RoundToInt(32 * s)), new Color(0.75f, 0.95f, 0.55f));
         string stonesTxt = "Seixos: ";
         for (int i = 0; i < gg.StonesMax; i++) stonesTxt += i < gg.Stones ? "● " : "○ ";
-        ShadowLabel(new Rect(0, 50 * s, W, 40 * s), stonesTxt + "   •   distância " + Mathf.RoundToInt(Mathf.Max(0f, gg.Distance)) + " m", new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(28 * s) }, Color.white);
+        ShadowLabel(new Rect(0, 50 * s, W, 40 * s), stonesTxt + "   •   distância " + Mathf.RoundToInt(Mathf.Max(0f, gg.Distance)) + " m", Sty(midStyle, fs: Mathf.RoundToInt(28 * s)), Color.white);
         string hint = RunnerTouch.UseTouchUI
             ? "Arraste para mirar  •  segure para girar a funda  •  solte na zona verde"
             : "Mouse ou WASD: mirar  •  segure clique/Espaço para girar  •  solte na zona verde  •  acerte a testa!";
-        ShadowLabel(new Rect(0, 88 * s, W, 34 * s), hint, new GUIStyle(cardSmall), new Color(1f, 0.9f, 0.7f));
+        ShadowLabel(new Rect(0, 88 * s, W, 34 * s), hint, Sty(cardSmall), new Color(1f, 0.9f, 0.7f));
 
         // mira
         Vector3 sp = WorldToScreen(gg.AimWorld);
@@ -507,13 +509,13 @@ public partial class RunnerGame
         Box(m, new Color(0.25f, 0.2f, 0.15f));
         Box(new Rect(m.x + m.width * RunnerGoliath.SweetMin, m.y, m.width * (RunnerGoliath.SweetMax - RunnerGoliath.SweetMin), m.height), new Color(0.3f, 0.8f, 0.3f, 0.8f));
         if (gg.Charging) Box(new Rect(m.x + m.width * gg.Charge - 3 * s, m.y - 6 * s, 6 * s, m.height + 12 * s), Color.white);
-        ShadowLabel(new Rect(0, m.yMax + 4 * s, W, 34 * s), gg.Charging ? "GIRANDO A FUNDA..." : "segure para girar", new GUIStyle(cardSmall), new Color(0.9f, 0.9f, 0.8f));
+        ShadowLabel(new Rect(0, m.yMax + 4 * s, W, 34 * s), gg.Charging ? "GIRANDO A FUNDA..." : "segure para girar", Sty(cardSmall), new Color(0.9f, 0.9f, 0.8f));
 
         if (gg.TauntTime > 0f && !gg.Won)
-            ShadowLabel(new Rect(W * 0.1f, H * 0.22f, W * 0.8f, 50 * s), "GOLIAS: " + gg.Taunt, new GUIStyle(midStyle) { wordWrap = true, fontSize = Mathf.RoundToInt(28 * s) }, new Color(1f, 0.55f, 0.45f));
-        var big = new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(48 * s) };
+            ShadowLabel(new Rect(W * 0.1f, H * 0.22f, W * 0.8f, 50 * s), "GOLIAS: " + gg.Taunt, Sty(midStyle, ww: 1, fs: Mathf.RoundToInt(28 * s)), new Color(1f, 0.55f, 0.45f));
+        var big = Sty(bigStyle, fs: Mathf.RoundToInt(48 * s));
         if (gg.ShieldUp) ShadowLabel(new Rect(0, H * 0.3f, W, 60 * s), "ESCUDO ERGUIDO — ESPERE!", big, new Color(1f, 0.7f, 0.3f));
-        else if (gg.ShieldWarning) ShadowLabel(new Rect(0, H * 0.3f, W, 60 * s), "ele vai erguer o escudo...", new GUIStyle(midStyle), new Color(1f, 0.8f, 0.5f));
+        else if (gg.ShieldWarning) ShadowLabel(new Rect(0, H * 0.3f, W, 60 * s), "ele vai erguer o escudo...", Sty(midStyle), new Color(1f, 0.8f, 0.5f));
         if (gg.Style == 2 && Mathf.Abs(gg.Wind) > 0.3f)
             ShadowLabel(new Rect(0, H * 0.36f, W, 60 * s), gg.Wind > 0f ? "VENTO  >>>" : "<<<  VENTO", big, new Color(0.9f, 0.85f, 0.6f, Mathf.Clamp01(Mathf.Abs(gg.Wind) / 2f)));
     }

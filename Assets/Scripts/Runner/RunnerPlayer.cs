@@ -51,7 +51,8 @@ public class RunnerPlayer : MonoBehaviour
     float flyY;
     Renderer[] rends;
 
-    bool Grounded => feetY <= 0.001f;
+    [HideInInspector] public float groundY;   // altura do chão (carroça) embaixo do jogador
+    bool Grounded => feetY <= groundY + 0.001f;
 
     /// Velocidade vertical (negativa = caindo). Usada para saber se o jogador pisou em cima de algo.
     public float VerticalSpeed => vy;
@@ -158,14 +159,21 @@ public class RunnerPlayer : MonoBehaviour
 
     // ------------------------------------------------------------------ voo
 
-    public void StartFlight()
+    /// keepHorse = true: voa com o próprio cavalo (Travessia dos Céus) em vez do carro de fogo.
+    public void StartFlight(bool keepHorse = false)
     {
         flying = true;
         flyY = transform.position.y;
         flyVel = new Vector2(0f, 6f);
         vy = 0f;
-        SetModel(true);
+        SetModel(!keepHorse);
         SetVisible(true);
+    }
+
+    /// Empurra o voo para cima (subida da travessia).
+    public void LiftUp(float v)
+    {
+        if (flyVel.y < v) flyVel.y = v;
     }
 
     public void EndFlight()
@@ -246,6 +254,15 @@ public class RunnerPlayer : MonoBehaviour
         }
         axis = Vector2.ClampMagnitude(axis, 1f);
 
+        // abertura: a demo se joga sozinha
+        if (g.TrailerAuto && !flying && !driving)
+        {
+            g.AutoPilot(this, out left, out right, out jump);
+            down = false;
+            ability = false;
+            fire = true;
+        }
+
         if (ability) g.TryBulletTime();
 
         if (flying) FlyStep(g, st, axis, dt, pdt);
@@ -274,8 +291,11 @@ public class RunnerPlayer : MonoBehaviour
 
     void RunStep(RunnerGame g, RunnerStats st, bool left, bool right, bool jump, bool down, float dt, float pdt)
     {
+        groundY = g.GroundAt(x, transform.position.z, feetY);   // em cima de uma carroça?
+        int laneBefore = lane;
         if (left && lane > 0) lane--;
         if (right && lane < 2) lane++;
+        if (lane != laneBefore) g.OnLaneChanged(laneBefore, lane);   // Mulher de Ló
 
         if (jump)
         {
@@ -293,14 +313,14 @@ public class RunnerPlayer : MonoBehaviour
         }
         if (down && !Grounded) vy = -22f;
 
-        bool wasAirborne = feetY > 0.05f;
-        vy -= gravity * pdt;
+        bool wasAirborne = feetY > groundY + 0.05f;
+        vy -= gravity * st.gravityMul * pdt;   // Dilúvio: você flutua
         feetY += vy * pdt;
-        if (feetY <= 0f)
+        if (feetY <= groundY)
         {
             if (wasAirborne) g.OnPlayerLanded(transform.position - new Vector3(0f, 0.9f, 0f));   // Pisão do Querubim
-            feetY = 0f;
-            vy = 0f;
+            feetY = groundY;
+            if (vy < 0f) vy = 0f;
         }
 
         float targetX = (lane - 1) * RunnerGame.LaneWidth;
@@ -400,7 +420,7 @@ public class RunnerPlayer : MonoBehaviour
                 g.MeleeAttack(transform.position, MeleeReach(g, st), st.MeleeHalfWidth, st.Damage, w);
             if (weaponModel != null && !flying && !driving) weaponModel.OnFire();
             // onda de luz curta (60% do dano) — alcança o chefe e funciona no carro/voo
-            Vector3 o = transform.position + new Vector3(0f, flying ? 0f : 0.2f, 1f);
+            Vector3 o = transform.position + new Vector3(0f, flying ? 0f : 0.2f - (driving ? 0f : groundY * 0.85f), 1f);
             float wtotal = (n - 1) * 6f;
             for (int i = 0; i < n; i++)
             {
@@ -416,6 +436,7 @@ public class RunnerPlayer : MonoBehaviour
             ? transform.position + new Vector3(0f, -0.05f, 1.3f)
             : driving ? transform.position + new Vector3(0f, 0.35f, 1.8f)
             : (weaponModel != null ? weaponModel.MuzzlePosition : transform.position + new Vector3(0.3f, 0.1f, 0.8f));
+        if (!flying && !driving && groundY > 0.5f) origin.y -= groundY * 0.85f;   // em cima da carroça: atira para baixo, nos inimigos do chão
         if (!flying && !driving && weaponModel != null) weaponModel.OnFire();
 
         for (int i = 0; i < n; i++)

@@ -9,7 +9,7 @@ using UnityEngine;
 /// </summary>
 public partial class RunnerGame
 {
-    int cineKind;            // 0 = intro, 1 = vitória
+    int cineKind;            // 0 = intro, 1 = vitória, 2 = abertura (RunnerGameTrailer)
     float cineT;
     float cineLength;
     readonly List<GameObject> cineObjs = new List<GameObject>();
@@ -137,6 +137,7 @@ public partial class RunnerGame
 
     void UpdateCinema(float udt)
     {
+        if (cineKind == 2) return;   // abertura: quem controla é o UpdateTrailer
         cineT += udt;
         bool skip = cineT > (cineKind == 0 ? 0.4f : 2f) && (ConfirmPressed() || PausePressed());
         if (cineKind == 0) UpdateIntro(udt);
@@ -249,12 +250,33 @@ public partial class RunnerGame
         if (kind == 1)
         {
             ApplyAtmosphere();
-            bannerText = "MODO INFINITO";
-            bannerSub = "A jornada continua — os inimigos ficam cada vez mais fortes";
-            bannerTime = 4f;
-            AfterBossRewards();
-            OpenCardChoice(true);
+            OpenVictoryChoice();
         }
+    }
+
+    /// Depois de vencer Satanás: terminar a jornada (volta ao menu) ou continuar no modo infinito.
+    void OpenVictoryChoice()
+    {
+        int talents = Meta.TalentsForRun(Score, bossesDefeated, level, true);
+        var opts = new List<ChoiceOpt>
+        {
+            Opt("TERMINAR", "Voltar ao Menu", "Encerre a jornada como vencedor e receba " + talents + " Talentos.", new Color(1f, 0.85f, 0.35f), () =>
+            {
+                QuitToMenu();
+                menuNote = "JORNADA COMPLETA!  +" + lastTalentsEarned + " Talentos";
+                menuNoteTime = 6f;
+            }),
+            Opt("CONTINUAR", "Modo Infinito", "A jornada continua e os inimigos ficam cada vez mais fortes. Antes, escolha uma carta (sempre uma NOVA).", new Color(0.6f, 0.75f, 1f), () =>
+            {
+                bannerText = "MODO INFINITO";
+                bannerSub = "A jornada continua — os inimigos ficam cada vez mais fortes";
+                bannerTime = 4f;
+                AfterBossRewards();
+                offerHasNova = true;   // vencer Satanás sempre revela uma carta nova
+                OpenCardChoice(true);
+            }),
+        };
+        OpenChoice("VOCÊ VENCEU!", "\"Combati o bom combate, acabei a carreira, guardei a fé\" (2Tm 4:7)  —  deseja continuar ou voltar?", new Color(1f, 0.85f, 0.3f), opts);
     }
 
     void CineClear()
@@ -269,12 +291,13 @@ public partial class RunnerGame
 
     void DrawCinema(float s, float W, float H)
     {
+        if (cineKind == 2) { DrawTrailer(s, W, H); return; }
         // faixas de cinema
         float bar = 90 * s;
         Box(new Rect(0, 0, W, bar), Color.black);
         Box(new Rect(0, H - bar, W, bar), Color.black);
-        var big = new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(110 * s) };
-        var verse = new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(30 * s), wordWrap = true, fontStyle = FontStyle.Italic };
+        var big = Sty(bigStyle, fs: Mathf.RoundToInt(110 * s));
+        var verse = Sty(midStyle, fs: Mathf.RoundToInt(30 * s), ww: 1, fst: FontStyle.Italic);
         if (cineKind == 0)
         {
             float a1 = Fade(cineT, 0.2f, 3.6f);
@@ -297,15 +320,15 @@ public partial class RunnerGame
                 var r = new Rect(W / 2 - 320 * s, H * 0.36f, 640 * s, 150 * s);
                 Box(r, new Color(0f, 0f, 0f, 0.5f * a3));
                 string summary = "Profeta: " + (prophet != null ? prophet.name : "Ezequiel") + "\nPontos: " + Score + "   •   Chefes: " + bossesDefeated + "\nTempo de jornada: " + Mathf.FloorToInt(runTime / 60f) + "min " + Mathf.FloorToInt(runTime % 60f) + "s   •   Abates: " + kills;
-                ShadowLabel(r, summary, new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(30 * s) }, new Color(1f, 1f, 1f, a3));
+                ShadowLabel(r, summary, Sty(midStyle, fs: Mathf.RoundToInt(30 * s)), new Color(1f, 1f, 1f, a3));
             }
             float a4 = Fade(cineT, 9.4f, 12.5f);
-            ShadowLabel(new Rect(0, H * 0.3f, W, 160 * s), "∞", new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(170 * s) }, new Color(1f, 0.85f, 0.3f, a4));
-            ShadowLabel(new Rect(0, H * 0.3f + 150 * s, W, 90 * s), "MODO INFINITO", big, new Color(1f, 0.95f, 0.8f, a4));
+            ShadowLabel(new Rect(0, H * 0.3f, W, 160 * s), "★", Sty(bigStyle, fs: Mathf.RoundToInt(150 * s)), new Color(1f, 0.85f, 0.3f, a4));
+            ShadowLabel(new Rect(0, H * 0.3f + 150 * s, W, 90 * s), "JORNADA COMPLETA", big, new Color(1f, 0.95f, 0.8f, a4));
         }
         if (cineT > (cineKind == 0 ? 0.4f : 2f))
             ShadowLabel(new Rect(0, H - bar + 20 * s, W - 30 * s, 50 * s), RunnerTouch.UseTouchUI ? "toque para pular" : "Enter / clique para pular",
-                new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleRight }, new Color(1f, 1f, 1f, 0.6f));
+                Sty(cardSmall, al: TextAnchor.MiddleRight), new Color(1f, 1f, 1f, 0.6f));
     }
 
     static float Fade(float t, float a, float b)

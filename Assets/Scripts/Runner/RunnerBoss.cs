@@ -349,9 +349,9 @@ public class RunnerBoss : MonoBehaviour
                 for (int l = 0; l < 3; l++)
                 {
                     if (l == safe) continue;
-                    var m = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    Destroy(m.GetComponent<Collider>());
-                    m.GetComponent<Renderer>().sharedMaterial = g.Glow(ChuvaColor());
+                    MeshRenderer mR;
+                    var m = RunnerGame.NewPrim(PrimitiveType.Cube, out mR, false);
+                    mR.sharedMaterial = g.Glow(ChuvaColor());
                     strikes.Add(new Strike { x = LaneX(l), timer = 1.05f, marker = m });
                 }
             }
@@ -365,9 +365,9 @@ public class RunnerBoss : MonoBehaviour
             s.marker.transform.localScale = new Vector3(pulse, 0.04f, pulse);
             if (s.timer > 0f) continue;
             // o golpe cai do céu
-            var col = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(col.GetComponent<Collider>());
-            col.GetComponent<Renderer>().sharedMaterial = g.Glow(ChuvaColor());
+            MeshRenderer colR;
+            var col = RunnerGame.NewPrim(PrimitiveType.Cube, out colR, false);
+            colR.sharedMaterial = g.Glow(ChuvaColor());
             col.transform.position = new Vector3(s.x, 7f, pp.z + 3f);
             col.transform.localScale = new Vector3(1.1f, 14f, 1.1f);
             var d = col.AddComponent<RunnerDebris>();

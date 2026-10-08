@@ -148,6 +148,21 @@ public class RunnerStats
     public float bulletTimeDuration = 3f;
     public float cardStepMul = 1f;
 
+    // cartas que mudam as regras
+    public float gravityMul = 1f;          // Dilúvio: você flutua
+    public bool flood;                     // Arca de Noé (Dilúvio)
+    public bool jacobLadder;               // Escada de Jacó: pisa em quase tudo
+    public bool gideon;                    // Os 300 de Gideão: baralho de 10, cartas valem 2x
+    public bool josephDreams;              // Sonhos de José: vê as próximas cartas
+    public bool babelConfusion;            // Confusão de Babel
+    public bool lotsWife;                  // Mulher de Ló
+
+    // cartas novas
+    public float siclosMul = 1f;           // Ouro de Ofir / Rede de Pedro
+    public float igniteChance;             // Brasas do Altar
+    public float wetChance;                // Orvalho de Gideão
+    public bool elijahMantle;              // Manto de Elias
+
     // evoluções
     public float chainMul = 1f;            // multiplica o dano do raio em cadeia
     public float mosesChance = 0.08f;
@@ -205,6 +220,7 @@ public class RunnerCard
     public bool curse;
     public bool isWeapon;
     public bool isEvolution;
+    public bool plague;             // praga: entra no baralho por eventos e atrapalha
     public string reqText = "";     // "Espada + Lâminas Giratórias" (evoluções)
     public Func<RunnerGame, bool> cond;
     public Action<RunnerGame> apply;
@@ -311,8 +327,48 @@ public static class CardDB
         l.Add(C("destino", "Visão do Destino", Rarity.Lendario, 1, "+1 carta para escolher em cada nível.", g => g.stats.choices++));
         l.Add(C("arsenal", "Arsenal Supremo", Rarity.Lendario, 1, "Dano x1,5, cadência +30% e +1 projétil.", g => { g.stats.damageMul *= 1.5f; g.stats.fireRateMul += 0.3f; g.stats.extraProjectiles++; }));
 
+        // ---------------- CARTAS NOVAS (variedade)
+        l.Add(C("lampada", "Lâmpada aos Pés", Rarity.Comum, 4, "+15% de alcance dos projéteis e +5% de crítico. (Sl 119:105)", g => { g.stats.bulletSpeedMul += 0.15f; g.stats.critChance += 0.05f; }));
+        l.Add(C("sal", "Sal da Terra", Rarity.Comum, 5, "+12% de dano e +10% de pontos. (Mt 5:13)", g => { g.stats.damageMul += 0.12f; g.stats.scoreMul += 0.1f; }));
+        l.Add(C("cinto", "Cinto da Verdade", Rarity.Comum, 3, "+0,4s de invencibilidade após dano e +6% de dano. (Ef 6:14)", g => { g.stats.invulnTime += 0.4f; g.stats.damageMul += 0.06f; }));
+        l.Add(C("espigas", "Espigas no Sábado", Rarity.Comum, 6, "+12% de cadência de tiro. (Mc 2:23)", g => g.stats.fireRateMul += 0.12f));
+        l.Add(C("talento", "Parábola dos Talentos", Rarity.Comum, 4, "+30% de pontos ganhos. (Mt 25:21)", g => g.stats.scoreMul += 0.3f));
+        l.Add(C("cajado_pastor", "Cajado do Pastor", Rarity.Comum, 3, "Troca de faixa 25% mais rápida e pulo 10% mais alto. (Sl 23:4)", g => { g.stats.laneMul += 0.25f; g.stats.jumpMul += 0.1f; }));
+        l.Add(C("sopro", "Sopro de Vida", Rarity.Raro, 2, "+1 vida máxima e +1 nível de escudo. (Gn 2:7)", g => { g.maxLives++; g.Heal(1); g.stats.shieldLevel++; g.RechargeShieldNow(); }));
+        l.Add(C("aguia", "Asas de Águia", Rarity.Raro, 1, "Pulo duplo e pulos 15% mais altos. (Is 40:31)", g => { g.stats.doubleJump = true; g.stats.jumpMul += 0.15f; }));
+        l.Add(C("ouro_ofir", "Ouro de Ofir", Rarity.Raro, 3, "+25% de siclos coletados. (1Rs 9:28)", g => g.stats.siclosMul += 0.25f));
+        l.Add(C("chifre_oleo", "Chifre de Azeite", Rarity.Raro, 3, "+8% de crítico e +20% de dano crítico. (1Sm 16:13)", g => { g.stats.critChance += 0.08f; g.stats.critMul += 0.2f; }));
+        l.Add(C("brasas", "Brasas do Altar", Rarity.Raro, 3, "Acertos têm +15% de chance de INCENDIAR o inimigo. (Is 6:6)", g => g.stats.igniteChance += 0.15f));
+        l.Add(C("orvalho", "Orvalho do Velo", Rarity.Raro, 3, "Acertos têm +20% de chance de MOLHAR o inimigo. (Jz 6:38)", g => g.stats.wetChance += 0.2f));
+        l.Add(C("relampago", "Relâmpagos do Sinai", Rarity.Raro, 3, "Raio em cadeia em +1 inimigo e +20% de dano do raio. (Êx 19:16)", g => { g.stats.chain += 1; g.stats.chainMul *= 1.2f; }));
+        l.Add(C("anjo_guarda", "Anjo da Guarda", Rarity.Epico, 2, "Um drone celestial te acompanha e +1 vida máxima. (Sl 91:11)", g => { g.stats.drones++; g.AddDrone(); g.maxLives++; g.Heal(1); }));
+        l.Add(C("forca_sansao", "Força de Sansão", Rarity.Epico, 2, "+40% de dano com armas corpo a corpo (+15% com as outras). (Jz 15:15)", g => g.stats.damageMul += g.stats.Melee ? 0.4f : 0.15f));
+        l.Add(C("granizo", "Granizo de Fogo", Rarity.Epico, 2, "Fogo do céu cai sobre os inimigos com frequência. (Êx 9:24)", g => g.stats.skyFire++));
+        l.Add(C("rede_pedro", "Rede de Pedro", Rarity.Epico, 1, "+50% de siclos coletados e +1 rerrolagem. (Lc 5:6)", g => { g.stats.siclosMul += 0.5f; g.stats.rerolls++; }));
+        l.Add(C("porcao", "Porção Dobrada", Rarity.Epico, 2, "+1 rerrolagem e +10% de dano. (2Rs 2:9)", g => { g.stats.rerolls++; g.stats.damageMul += 0.1f; }));
+        l.Add(C("querubins", "Rodas de Ezequiel", Rarity.Lendario, 1, "Duas rodas cheias de olhos giram ao seu redor e +20% de cadência. (Ez 1:16)", g => { g.stats.orbitBlades += 2; g.RefreshOrbitBlades(); g.stats.fireRateMul += 0.2f; }));
+        l.Add(C("manto", "Manto de Elias", Rarity.Lendario, 1, "Ao tomar dano, cai fogo do céu 3 vezes sobre os inimigos à frente. (2Rs 2:13)", g => g.stats.elijahMantle = true));
+        l.Add(C("leao", "Leão de Judá", Rarity.Lendario, 1, "Dano x1,5 e +2 vidas máximas, mas troca de faixa 20% mais lenta. (Ap 5:5)", g => { g.stats.damageMul *= 1.5f; g.maxLives += 2; g.Heal(2); g.stats.laneMul -= 0.2f; }));
+
+        // ---------------- CARTAS QUE MUDAM AS REGRAS
+        l.Add(C("diluvio", "Arca de Noé", Rarity.Lendario, 1, "O DILÚVIO: muralhas e barreiras afundam, você flutua (pulos longos) e todo inimigo fica molhado. (Gn 7:17)", g => g.StartFlood()));
+        l.Add(C("jaco", "Escada de Jacó", Rarity.Lendario, 1, "Pulos 60% mais altos e você pode pisar em qualquer inimigo ou muralha que não seja indestrutível. (Gn 28:12)", g => { g.stats.jumpMul += 0.6f; g.stats.jacobLadder = true; }));
+        l.Add(C("gideao", "Os 300 de Gideão", Rarity.Lendario, 1, "Seu baralho desta jornada fica com só 10 cartas, mas toda carta escolhida vale em dobro. (Jz 7:7)", g => g.StartGideon()));
+        l.Add(C("babel", "Confusão de Babel", Rarity.Lendario, 1, "Seus acertos têm 20% de chance de confundir: o inimigo confuso ataca os outros. (Gn 11:7)", g => g.stats.babelConfusion = true));
+        l.Add(C("jose", "Sonhos de José", Rarity.Epico, 1, "Você vê as próximas 3 cartas do baralho e ganha +2 rerrolagens. (Gn 41:25)", g => { g.stats.josephDreams = true; g.stats.rerolls += 2; }));
+        l.Add(C("fartura", "Sete Anos de Fartura", Rarity.Epico, 1, "Os próximos 7 níveis oferecem 5 cartas. Depois vêm 7 níveis de fome, com só 1. (Gn 41:29)", g => g.StartPlenty()));
+        l.Add(C("lo", "Mulher de Ló", Rarity.Epico, 1, "MALDIÇÃO: dano x2, mas não olhe para trás — voltar para a faixa de onde acabou de sair custa 1 vida. (Gn 19:26)", g => { g.stats.damageMul *= 2f; g.stats.lotsWife = true; }, null, true));
+
+        // ---------------- PRAGAS (só entram no baralho por eventos, caminhos e juramentos)
+        l.Add(Plague("praga_ras", "Praga das Rãs", "Não pode ser escolhida: só ocupa espaço na escolha. Queime no altar. (Êx 8:6)"));
+        l.Add(Plague("praga_gafanhotos", "Praga de Gafanhotos", "Ao aparecer, devora 5 siclos. Queime no altar. (Êx 10:15)"));
+        l.Add(Plague("idolo", "Ídolo de Ouro", "Enquanto estiver no seu baralho: -10% de dano. Queime no altar. (Êx 32:4)"));
+
         return l;
     }
+
+    static RunnerCard Plague(string id, string name, string desc)
+        => new RunnerCard { id = id, name = name, rarity = Rarity.Comum, maxStacks = 99, desc = "PRAGA: " + desc, curse = true, plague = true, apply = g => { } };
 
     public static readonly Color EvolutionColor = new Color(1f, 0.95f, 0.7f);
 
@@ -335,6 +391,79 @@ public static class CardDB
             case Rarity.Epico: return "ÉPICA";
             case Rarity.Lendario: return "LENDÁRIA";
             default: return "COMUM";
+        }
+    }
+}
+
+public enum Family { Nenhuma, Fogo, Agua, Guerra, Fe, Sinais }
+
+/// <summary>
+/// Famílias de cartas: juntar 3 e 5 cartas diferentes da mesma família liga bônus extras.
+/// </summary>
+public static class Families
+{
+    public static readonly Family[] All = { Family.Fogo, Family.Agua, Family.Guerra, Family.Fe, Family.Sinais };
+
+    static Dictionary<string, Family> map;
+    static Dictionary<string, Family> Map
+    {
+        get
+        {
+            if (map != null) return map;
+            map = new Dictionary<string, Family>();
+            System.Action<Family, string[]> add = (f, ids) => { foreach (var id in ids) map[id] = f; };
+            add(Family.Fogo, new[] { "polvora", "calibre", "explosivo", "reacao", "adrenalina", "vidro", "laminas", "fogoceu", "ira", "lo", "brasas", "granizo", "manto" });
+            add(Family.Agua, new[] { "coracao", "pao", "dizimo", "kit", "vampiro", "mana", "marvermelho", "diluvio", "fartura", "sal", "orvalho", "rede_pedro", "sopro" });
+            add(Family.Guerra, new[] { "dano", "cadencia", "crit", "multi", "perfura", "homing", "fatal", "funda", "pacto", "arsenal", "gideao", "espigas", "chifre_oleo", "forca_sansao", "leao" });
+            add(Family.Fe, new[] { "agil", "fantasma", "escudo", "pulo2", "setimo", "represalia", "ariete", "jaco", "cinto", "cajado_pastor", "aguia", "anjo_guarda" });
+            add(Family.Sinais, new[] { "sorte", "ganancia", "pisao", "corrente", "drone", "jerico", "vara", "tempo", "destino", "babel", "jose", "lampada", "talento", "ouro_ofir", "relampago", "porcao", "querubins" });
+            return map;
+        }
+    }
+
+    public static Family Of(RunnerCard c)
+    {
+        Family f;
+        return c != null && Map.TryGetValue(c.id, out f) ? f : Family.Nenhuma;
+    }
+
+    public static string Name(Family f)
+    {
+        switch (f)
+        {
+            case Family.Fogo: return "FOGO";
+            case Family.Agua: return "ÁGUA";
+            case Family.Guerra: return "GUERRA";
+            case Family.Fe: return "FÉ";
+            case Family.Sinais: return "SINAIS";
+            default: return "";
+        }
+    }
+
+    public static Color Tint(Family f)
+    {
+        switch (f)
+        {
+            case Family.Fogo: return new Color(1f, 0.48f, 0.18f);
+            case Family.Agua: return new Color(0.3f, 0.68f, 1f);
+            case Family.Guerra: return new Color(0.82f, 0.84f, 0.9f);
+            case Family.Fe: return new Color(1f, 0.88f, 0.4f);
+            case Family.Sinais: return new Color(0.72f, 0.52f, 1f);
+            default: return Color.gray;
+        }
+    }
+
+    public static string Bonus(Family f, int level)
+    {
+        bool five = level >= 5;
+        switch (f)
+        {
+            case Family.Fogo: return five ? "Inimigos que morrem queimando espalham o fogo" : "Seus golpes incendeiam os inimigos";
+            case Family.Agua: return five ? "Fonte de Água Viva: +1 vida máxima e cura 1 a cada 45s" : "Seus golpes encharcam; molhados levam +20% de dano";
+            case Family.Guerra: return five ? "+1 projétil e +1 perfuração" : "+15% de dano e +10% de crítico";
+            case Family.Fe: return five ? "25% de chance de um milagre anular o dano" : "+1 nível de Escudo";
+            case Family.Sinais: return five ? "A cada 15s um raio do céu cai em 3 inimigos" : "+1 raio em cadeia; o raio eletrifica";
+            default: return "";
         }
     }
 }

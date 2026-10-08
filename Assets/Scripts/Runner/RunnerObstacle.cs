@@ -1,7 +1,7 @@
 using UnityEngine;
 
 public enum ObType { Wall, Barrier, Target, Mover, Turret, EnemyShot, Health, Tank, Boss, BossDrone, Ring, Mine, Flyer, PlaneBox, CarBox, Rival, Cone, Boost, ShipBox, AngelBox, HouseOpen, HouseBlood, BabelBox, JerichoBox, GoliathBox, Note, NoteBad, Shockwave,
-    Shielded, CrackWall, Boulder, Colossus, Charger, FireJet, Spikes, Slinger, SlingStone, Hopper }
+    Shielded, CrackWall, Boulder, Colossus, Charger, FireJet, Spikes, Slinger, SlingStone, Hopper, Platform, Coin }
 
 public class RunnerObstacle : MonoBehaviour
 {
@@ -43,6 +43,23 @@ public class RunnerObstacle : MonoBehaviour
     [HideInInspector] public int state;
     [HideInInspector] public float targetX;
 
+    // efeitos (queimando, molhado, eletrificado, confuso)
+    [HideInInspector] public float burnT, burnDps, wetT, shockT, confuseT, statusTick, confuseTick;
+    [HideInInspector] public GameObject statusFx;
+    [HideInInspector] public Color statusColor;
+
+    // carroça (plataforma alta): começa em platZ0 (rampa) e termina em platZ1
+    [HideInInspector] public float platZ0, platZ1, platTop, platRamp;
+
+    // campeão de elite: modificador (1 blindado, 2 veloz, 3 divisor, 4 atirador, 5 regenera)
+    [HideInInspector] public int affix;
+    [HideInInspector] public float eliteTime;
+    [HideInInspector] public bool champion;
+
+    // "peso" do golpe: o inimigo incha um pouquinho quando apanha
+    [HideInInspector] public float punch;
+    Vector3 baseScale = Vector3.one;
+
     void OnDestroy()
     {
         if (marker != null) Destroy(marker);
@@ -58,6 +75,7 @@ public class RunnerObstacle : MonoBehaviour
     {
         rends = GetComponentsInChildren<Renderer>();
         mpb = new MaterialPropertyBlock();
+        baseScale = transform.localScale;
         phase = Random.Range(0f, Mathf.PI * 2f);
         maxHp = hp;
     }
@@ -109,7 +127,7 @@ public class RunnerObstacle : MonoBehaviour
                     fireTimer -= dt;
                     if (fireTimer <= 0f)
                     {
-                        fireTimer = Mathf.Lerp(1.7f, 0.8f, g.Difficulty) / (1f + g.LevelThreat * 0.3f);
+                        fireTimer = Mathf.Lerp(1.7f, 0.8f, g.Difficulty) / (1f + g.ThreatSoft * 0.3f);
                         g.SpawnEnemyShot(p + new Vector3(0f, 0.4f, -1.0f));
                     }
                 }
@@ -277,7 +295,7 @@ public class RunnerObstacle : MonoBehaviour
                     fireTimer -= dt;
                     if (fireTimer <= 0f)
                     {
-                        fireTimer = Mathf.Lerp(2.6f, 1.5f, g.Difficulty) / (1f + g.LevelThreat * 0.25f);
+                        fireTimer = Mathf.Lerp(2.6f, 1.5f, g.Difficulty) / (1f + g.ThreatSoft * 0.25f);
                         g.SpawnSlingStone(p + new Vector3(0f, 1.2f, -0.5f));
                     }
                 }
@@ -351,7 +369,7 @@ public class RunnerObstacle : MonoBehaviour
                     fireTimer -= dt;
                     if (fireTimer <= 0f)
                     {
-                        fireTimer = Mathf.Lerp(2.2f, 1.2f, g.Difficulty) / (1f + g.LevelThreat * 0.3f);
+                        fireTimer = Mathf.Lerp(2.2f, 1.2f, g.Difficulty) / (1f + g.ThreatSoft * 0.3f);
                         Vector3 o = p + new Vector3(0f, 0f, -1f);
                         float time = Mathf.Max(0.3f, (o.z - pp.z) / (g.speed + 14f));
                         g.SpawnEnemyShot(o, new Vector3((pp.x - o.x) / time, (pp.y - o.y) / time, -14f), 0f);
@@ -365,6 +383,11 @@ public class RunnerObstacle : MonoBehaviour
         {
             flash -= dt;
             if (flash <= 0f) SetFlash(false);
+        }
+        if (punch > 0f)
+        {
+            punch = Mathf.MoveTowards(punch, 0f, dt * 7f);
+            transform.localScale = baseScale * (1f + punch * 0.14f);
         }
     }
 
@@ -400,6 +423,7 @@ public class RunnerObstacle : MonoBehaviour
         if (dead) return false;
         hp -= dmg;
         if (hp <= 0f) return true;
+        punch = 1f;
         flash = 0.07f;
         SetFlash(true);
         return false;

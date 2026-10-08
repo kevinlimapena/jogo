@@ -242,7 +242,7 @@ public class RunnerBulletHell : MonoBehaviour
         if (!Active) return;
         var st = g.stats;
         float mdt = g.BulletTimeActive ? Time.unscaledDeltaTime : dt;   // a nave ignora o tempo bala
-        float diff = 1f + tier * 0.15f + g.Difficulty * 0.3f + g.LevelThreat * 0.12f;
+        float diff = 1f + tier * 0.15f + g.Difficulty * 0.3f + g.ThreatSoft * 0.12f;
         t += dt;
 
         // a arena avança junto com a cidade

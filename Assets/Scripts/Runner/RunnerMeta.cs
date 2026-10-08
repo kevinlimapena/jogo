@@ -112,6 +112,7 @@ public static class Meta
     {
         get
         {
+            if (DailyMode) return DailyProphet;
             string id = PlayerPrefs.GetString("runner_prophet", "ezequiel");
             foreach (var p in Prophets) if (p.id == id && IsUnlocked(p)) return p;
             return Prophets[0];
@@ -139,13 +140,13 @@ public static class Meta
     {
         new Oath { id = "nazireu", name = "Voto de Nazireu", desc = "-1 vida máxima", verse = "Nm 6:2", bonus = 0.2f },
         new Oath { id = "jejum", name = "Jejum de Quarenta Dias", desc = "rolos de cura não aparecem na pista", verse = "Mt 4:2", bonus = 0.15f },
-        new Oath { id = "pragas", name = "Pragas do Egito", desc = "inimigos comuns 50% mais resistentes", verse = "Êx 7–12", bonus = 0.25f },
+        new Oath { id = "pragas", name = "Pragas do Egito", desc = "inimigos comuns 50% mais resistentes e 2 Rãs no baralho", verse = "Êx 7–12", bonus = 0.25f },
         new Oath { id = "fornalha", name = "Fornalha Sete Vezes Mais Quente", desc = "a ameaça começa mais alta", verse = "Dn 3:19", bonus = 0.2f },
         new Oath { id = "anaque", name = "Filhos de Anaque", desc = "chefes com +50% de vida", verse = "Nm 13:33", bonus = 0.25f },
         new Oath { id = "exilio", name = "Exílio na Babilônia", desc = "as bênçãos do Templo não valem nesta jornada", verse = "Sl 137:1", bonus = 0.3f },
     });
 
-    public static bool OathOn(string id) => PlayerPrefs.GetInt("oath_" + id, 0) == 1;
+    public static bool OathOn(string id) => DailyMode ? DailyOath.id == id : PlayerPrefs.GetInt("oath_" + id, 0) == 1;
 
     public static void ToggleOath(Oath o)
     {
@@ -162,6 +163,36 @@ public static class Meta
     public static float OathTalentMul
     {
         get { float m = 1f; foreach (var o in Oaths) if (OathOn(o.id)) m += o.bonus; return m; }
+    }
+
+    // ------------------------------------------------------------------ desafio do dia
+
+    /// Jornada especial do dia: profeta, juramento e carta de regra iguais para todo mundo naquela data.
+    public static bool DailyMode;
+    static readonly string[] RuleCards = { "diluvio", "jaco", "gideao", "babel", "jose", "fartura", "lo" };
+
+    static int DayIndex => (int)(DateTime.Now.Date - new DateTime(2026, 1, 1)).TotalDays;
+    public static int DailyKey => DateTime.Now.Year * 10000 + DateTime.Now.Month * 100 + DateTime.Now.Day;
+    public static int DailySeed => DailyKey * 7919 + 17;
+    public static Prophet DailyProphet => Prophets[Mod(DayIndex * 3, Prophets.Count)];
+    public static Oath DailyOath => Oaths[Mod(DayIndex * 5 + 1, Oaths.Count)];
+    public static string DailyRule => RuleCards[Mod(DayIndex, RuleCards.Length)];
+    static int Mod(int a, int m) => ((a % m) + m) % m;
+
+    public static int DailyBest
+    {
+        get => PlayerPrefs.GetInt("daily_best_" + DailyKey, 0);
+        set { PlayerPrefs.SetInt("daily_best_" + DailyKey, value); PlayerPrefs.Save(); }
+    }
+
+    // ------------------------------------------------------------------ Livro da Vida (descobertas)
+
+    public static bool Seen(string kind, string id) => PlayerPrefs.GetInt("seen_" + kind + "_" + id, 0) == 1;
+    public static void MarkSeen(string kind, string id)
+    {
+        if (string.IsNullOrEmpty(id) || Seen(kind, id)) return;
+        PlayerPrefs.SetInt("seen_" + kind + "_" + id, 1);
+        PlayerPrefs.Save();
     }
 
     // ------------------------------------------------------------------ Templo

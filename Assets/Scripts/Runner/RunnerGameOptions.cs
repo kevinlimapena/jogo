@@ -9,8 +9,23 @@ public partial class RunnerGame
     /// Dicas de obstáculos ("PISE EM CIMA!", "INDESTRUTÍVEL!", avisos da 1ª aparição). Salvo entre jogatinas.
     public static bool HintsOn
     {
-        get => PlayerPrefs.GetInt("runner_hints", 1) == 1;
+        get => PlayerPrefs.GetInt("runner_hints", 1) == 1 && !(I != null && I.trailerActive);
         set { PlayerPrefs.SetInt("runner_hints", value ? 1 : 0); PlayerPrefs.Save(); }
+    }
+
+    /// Quantidade de textos na tela: 0 = POUCOS, 1 = NORMAL (padrão), 2 = TODOS.
+    public static int TextMode
+    {
+        get => Mathf.Clamp(PlayerPrefs.GetInt("runner_texts", 1), 0, 2);
+        set { PlayerPrefs.SetInt("runner_texts", value); PlayerPrefs.Save(); }
+    }
+    static readonly string[] TextModeNames = { "POUCOS", "NORMAL", "TODOS" };
+
+    void CycleTextMode()
+    {
+        TextMode = (TextMode + 1) % 3;
+        floats.Clear();
+        ShowPopup("TEXTOS NA TELA: " + TextModeNames[TextMode]);
     }
 
     float quitConfirmUntil;
@@ -39,6 +54,7 @@ public partial class RunnerGame
     void QuitToMenu()
     {
         quitConfirmUntil = 0f;
+        RecordDaily();
         if (Score > highScore)
         {
             highScore = Score;
@@ -97,7 +113,7 @@ public partial class RunnerGame
         var r = new Rect(W / 2 - 330 * s, H * 0.5f - 40 * s, 660 * s, 80 * s);
         Box(r, new Color(0f, 0f, 0f, 0.8f));
         ShadowLabel(r, Application.isMobilePlatform ? "Toque em VOLTAR de novo para sair do jogo" : "Aperte Esc de novo para sair do jogo",
-            new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(28 * s) }, Color.white);
+            Sty(midStyle, fs: Mathf.RoundToInt(28 * s)), Color.white);
     }
 
     /// F12: captura de tela em alta resolução (para as imagens da loja). Só no editor e em builds de desenvolvimento.
@@ -120,6 +136,8 @@ public partial class RunnerGame
         ActionButton("hints_p", new Rect(ps1Btn.x - 14 * s - 300 * s, ps1Btn.y, 300 * s, ps1Btn.height),
             "Dicas: " + (on ? "LIGADAS" : "DESLIGADAS") + (RunnerTouch.UseTouchUI ? "" : "  [H]"),
             on ? new Color(0.2f, 0.5f, 0.3f, 0.85f) : new Color(0.45f, 0.2f, 0.2f, 0.85f), s, ToggleHints);
+        ActionButton("texts_p", new Rect(ps1Btn.x, ps1Btn.yMax + 14 * s, ps1Btn.width, ps1Btn.height),
+            "Textos na tela: " + TextModeNames[TextMode], new Color(0.3f, 0.25f, 0.45f, 0.85f), s, CycleTextMode);
 
         bool confirming = Time.unscaledTime < quitConfirmUntil;
         string lbl = confirming ? (RunnerTouch.UseTouchUI ? "TOQUE DE NOVO PARA SAIR" : "APERTE DE NOVO PARA SAIR")
@@ -128,6 +146,6 @@ public partial class RunnerGame
             confirming ? new Color(0.75f, 0.15f, 0.1f, 0.95f) : new Color(0.35f, 0.25f, 0.1f, 0.9f), s, RequestQuitToMenu);
         if (confirming)
             ShadowLabel(new Rect(24 * s, 106 * s, 600 * s, 40 * s), "A jornada termina e você recebe os Talentos ganhos até aqui",
-                new GUIStyle(cardSmall) { alignment = TextAnchor.UpperLeft }, new Color(1f, 0.85f, 0.6f));
+                Sty(cardSmall, al: TextAnchor.UpperLeft), new Color(1f, 0.85f, 0.6f));
     }
 }

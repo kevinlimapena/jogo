@@ -196,9 +196,9 @@ public class RunnerChariot : MonoBehaviour
         if (trailTimer <= 0f && g != null && gameObject.activeInHierarchy)
         {
             trailTimer = Application.isMobilePlatform ? 0.08f : 0.04f;
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.GetComponent<Renderer>().sharedMaterial = g.Glow(Random.value < 0.5f ? FireOrange : (Random.value < 0.5f ? FireYellow : FireRed));
+            MeshRenderer goR;
+            var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+            goR.sharedMaterial = g.Glow(Random.value < 0.5f ? FireOrange : (Random.value < 0.5f ? FireYellow : FireRed));
             go.transform.position = transform.TransformPoint(new Vector3(Random.Range(-0.8f, 0.8f), Random.Range(-0.3f, 0.6f), Random.Range(-1.1f, 2.2f)));
             go.transform.localScale = Vector3.one * Random.Range(0.15f, 0.35f);
             var d = go.AddComponent<RunnerDebris>();

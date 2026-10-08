@@ -18,6 +18,36 @@ public class RunnerBullet : MonoBehaviour
     public bool canCrit = true;
 
     readonly HashSet<RunnerObstacle> alreadyHit = new HashSet<RunnerObstacle>();
+    [HideInInspector] public MeshRenderer rend;
+
+    // reaproveitamento: em vez de destruir, o tiro volta para a reserva
+    static readonly Stack<RunnerBullet> pool = new Stack<RunnerBullet>();
+
+    public static RunnerBullet Rent()
+    {
+        while (pool.Count > 0)
+        {
+            var b = pool.Pop();
+            if (b != null) return b;
+        }
+        return null;
+    }
+
+    public void ResetShot()
+    {
+        alreadyHit.Clear();
+        canCrit = true;
+        explode = 0f;
+        homing = 0f;
+    }
+
+    public void Release()
+    {
+        if (!gameObject.activeSelf) return;
+        gameObject.SetActive(false);
+        if (pool.Count < 160) pool.Push(this);
+        else Destroy(gameObject);
+    }
     const float StepLen = 0.5f;
 
     void Update()
@@ -25,7 +55,7 @@ public class RunnerBullet : MonoBehaviour
         var g = RunnerGame.I;
         if (g == null || g.state == RunnerState.Menu || g.state == RunnerState.GameOver)
         {
-            Destroy(gameObject);
+            Release();
             return;
         }
         float dt = Time.deltaTime;
@@ -58,7 +88,7 @@ public class RunnerBullet : MonoBehaviour
             RunnerObstacle hit = null;
             foreach (var o in g.obstacles)
             {
-                if (o == null || o.dead || o.type == ObType.Health || o.type == ObType.Ring || o.type == ObType.PlaneBox || o.type == ObType.CarBox || o.type == ObType.ShipBox || o.type == ObType.AngelBox || o.type == ObType.BabelBox || o.type == ObType.JerichoBox || o.type == ObType.GoliathBox || o.type == ObType.Note || o.type == ObType.NoteBad || o.type == ObType.Shockwave || o.type == ObType.SlingStone || o.type == ObType.HouseOpen || o.type == ObType.HouseBlood || o.type == ObType.Cone || o.type == ObType.Boost || alreadyHit.Contains(o)) continue;
+                if (o == null || o.dead || o.type == ObType.Health || o.type == ObType.Ring || o.type == ObType.PlaneBox || o.type == ObType.CarBox || o.type == ObType.ShipBox || o.type == ObType.AngelBox || o.type == ObType.BabelBox || o.type == ObType.JerichoBox || o.type == ObType.GoliathBox || o.type == ObType.Note || o.type == ObType.NoteBad || o.type == ObType.Shockwave || o.type == ObType.SlingStone || o.type == ObType.HouseOpen || o.type == ObType.HouseBlood || o.type == ObType.Cone || o.type == ObType.Boost || o.type == ObType.Platform || o.type == ObType.Coin || alreadyHit.Contains(o)) continue;
                 if (o.ContainsPoint(p, radius)) { hit = o; break; }
             }
             if (hit == null) continue;
@@ -68,7 +98,7 @@ public class RunnerBullet : MonoBehaviour
             if (hit.type == ObType.Rival)
             {
                 g.HitRival(hit, p);
-                Destroy(gameObject);
+                Release();
                 return;
             }
 
@@ -80,7 +110,7 @@ public class RunnerBullet : MonoBehaviour
                 pierceLeft--;
                 if (pierceLeft < 0)
                 {
-                    Destroy(gameObject);
+                    Release();
                     return;
                 }
             }
@@ -90,7 +120,7 @@ public class RunnerBullet : MonoBehaviour
                 g.PlayClank();
                 if (hit.stompable || hit.Indestructible) g.ImmuneHint(hit);
                 g.Explode(p, new Color(1f, 0.9f, 0.4f), 4);
-                Destroy(gameObject);
+                Release();
                 return;
             }
         }
@@ -98,6 +128,6 @@ public class RunnerBullet : MonoBehaviour
         transform.position = p;
         if (vx != 0f) transform.rotation = Quaternion.LookRotation(new Vector3(vx, 0f, vz));
         life -= dt;
-        if (life <= 0f) Destroy(gameObject);
+        if (life <= 0f) Release();
     }
 }

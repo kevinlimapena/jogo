@@ -1,0 +1,31 @@
+ÍCONES DAS CARTAS — EZEQUIEL
+
+Onde ficam:   Assets/Resources/CardIcons/
+Nome do arquivo = id da carta + .png   (ex.: fogoceu.png, arma_espada.png, evo_cruz.png)
+
+Para trocar pela arte final:
+  1. Faça a arte quadrada (256x256 ou 512x512, PNG com transparência).
+  2. Salve com o MESMO nome por cima do arquivo antigo.
+  3. Pronto: o jogo usa a nova imagem na escolha de cartas, no BARALHO, na loja e no painel da build.
+
+Se um ícone faltar, o jogo mostra o genérico da raridade:
+  _comum.png, _raro.png, _epico.png, _lendario.png
+
+Os ícones atuais são provisórios e foram gerados pelo script CardIcons_gerador.py
+(na pasta "Arte da loja"), que precisa de Python + Pillow.
+
+Lista de ids:
+  Comuns:     dano cadencia polvora calibre coracao agil sorte crit ganancia fantasma pao dizimo
+  Raras:      multi perfura explosivo homing escudo pulo2 vampiro fatal kit funda mana pisao setimo
+  Épicas:     corrente drone reacao represalia adrenalina vidro pacto laminas jerico fogoceu ira
+  Lendárias:  marvermelho vara tempo ariete destino arsenal
+  Novas:      lampada sal cinto espigas talento cajado_pastor (comuns)
+              sopro aguia ouro_ofir chifre_oleo brasas orvalho relampago (raras)
+              anjo_guarda forca_sansao granizo rede_pedro porcao (épicas)
+              querubins manto leao (lendárias)
+  Regras:     diluvio jaco gideao babel jose fartura lo
+  Pragas:     praga_ras praga_gafanhotos idolo
+  Armas:      arma_espada arma_lanca arma_martelo arma_pistola arma_escopeta arma_metralhadora
+              arma_duplas arma_bazuca arma_arco arma_railgun
+  Evoluções:  evo_espada evo_martelo evo_lanca evo_arco evo_trombeta evo_pedra evo_pao
+              evo_coluna evo_cruz evo_selos evo_vara

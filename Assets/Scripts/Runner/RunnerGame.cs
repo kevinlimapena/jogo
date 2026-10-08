@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public enum RunnerState { Menu, Playing, Paused, LevelUp, GameOver, Temple, Choice, Cutscene, Stable }
+public enum RunnerState { Menu, Playing, Paused, LevelUp, GameOver, Temple, Choice, Cutscene, Stable, Deck, Codex }
 
 /// <summary>
 /// Gerenciador principal do runner de tiro roguelike.
@@ -25,18 +25,22 @@ public partial class RunnerGame : MonoBehaviour
     public const float LaneWidth = 3f;
 
     [Header("Velocidade")]
-    public float startSpeed = 10f;
-    public float maxSpeed = 27f;
-    public float accel = 0.13f;
+    public float startSpeed = 11f;
+    public float maxSpeed = 30f;
+    public float accel = 0.16f;
 
     [Header("Vidas")]
     public int startLives = 3;
     public int hardMaxLives = 10;
 
     [Header("Cartas")]
-    public int firstCardScore = 150;
-    public int cardStepBase = 200;
-    public int cardStepPerLevel = 110;
+    public int firstCardScore = 260;
+    public int cardStepBase = 300;
+    public int cardStepPerLevel = 190;
+    public int cardStepQuad = 8;      // cresce com o quadrado do nível: os níveis altos pedem bem mais
+
+    /// Pontos necessários para a próxima carta, a partir do nível atual.
+    int CardStep() => Mathf.RoundToInt((cardStepBase + level * cardStepPerLevel + level * level * cardStepQuad) * stats.cardStepMul);
 
     [Header("Chefes")]
     public int bossEveryLevels = 5;
@@ -126,10 +130,12 @@ public partial class RunnerGame : MonoBehaviour
     [HideInInspector] public RunnerStats stats = new RunnerStats();
     public readonly List<RunnerObstacle> obstacles = new List<RunnerObstacle>();
 
-    public float Difficulty => Mathf.Clamp01(runTime / 150f + level * 0.02f);
+    public float Difficulty => Mathf.Clamp01(runTime / 210f + level * 0.03f);
     /// Ameaça extra dos níveis altos (0 no começo, cresce ~0.1 por nível até 2.5). Continua subindo depois que Difficulty chega a 1.
-    public float LevelThreat => Mathf.Clamp((level - 2) * 0.1f + ExtraThreat, 0f, 3.2f);
-    public float HpMul => (1f + runTime / 80f) * (1f + LevelThreat * 0.35f);
+    public float LevelThreat => Mathf.Clamp((level - 1) * 0.14f + Mathf.Max(0f, runTime - 90f) / 300f + ExtraThreat, 0f, 6f);
+    /// Ameaça com teto, para cadência de tiro e mini-jogos (depois disso só vida e quantidade de inimigos crescem).
+    public float ThreatSoft => Mathf.Min(LevelThreat, 4f);
+    public float HpMul => (1f + runTime / 60f) * (1f + LevelThreat * 0.45f);
     public int Score => Mathf.FloorToInt(distanceScore) + killScore;
     public bool BulletTimeActive => btActive > 0f && state == RunnerState.Playing;
 
@@ -255,6 +261,7 @@ public partial class RunnerGame : MonoBehaviour
         SetupMobile();
 
         SetupCameraAndLight();
+        SetupPerformance();
         hell = gameObject.AddComponent<RunnerBulletHell>();
         babelGame = gameObject.AddComponent<RunnerBabel>();
         ps1 = gameObject.AddComponent<RunnerPS1>();
@@ -271,6 +278,7 @@ public partial class RunnerGame : MonoBehaviour
         CreatePlayer();
         ResetRun();
         state = RunnerState.Menu;
+        if (!TrailerSeen) StartTrailer();   // primeira vez: a abertura
     }
 
     void TogglePS1()
@@ -312,6 +320,7 @@ public partial class RunnerGame : MonoBehaviour
         Theme = nb;
         if (changed)
         {
+            ClearStructPoolExcept(nb.id);
             if (roadRoot != null) Destroy(roadRoot.gameObject);
             roadSegs.Clear();
             BuildRaceRoad();
@@ -451,13 +460,13 @@ public partial class RunnerGame : MonoBehaviour
     /// Cria uma primitiva sem collider (a colisão do jogo é feita manualmente).
     public GameObject Prim(PrimitiveType type, Transform parent, Vector3 localPos, Vector3 scale, Color color, bool glow = false)
     {
-        var go = GameObject.CreatePrimitive(type);
-        Destroy(go.GetComponent<Collider>());
+        MeshRenderer r;
+        var go = NewPrim(type, out r);   // sem colisor: mais leve de criar
         go.transform.SetParent(parent, false);
         go.transform.localPosition = localPos;
         go.transform.localScale = scale;
-        var r = go.GetComponent<Renderer>();
         r.sharedMaterial = glow ? Glow(color) : Mat(color);
+        if (glow) { r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; r.receiveShadows = false; }   // brilhos não fazem sombra
         return go;
     }
 
@@ -512,11 +521,10 @@ public partial class RunnerGame : MonoBehaviour
             if (c.name != "Building") continue;
             float side = idx < 2 ? -1f : 1f;
             float z = (idx % 2) * TileLen * 0.5f + TileLen * 0.25f;
-            foreach (Transform old in c) Destroy(old.gameObject);
             c.localRotation = Quaternion.identity;
             c.localScale = Vector3.one;
-            float halfWidth = BuildStructure(c, side);
-            c.localPosition = new Vector3(side * (8.4f + halfWidth), 0f, z);
+            c.localPosition = new Vector3(c.localPosition.x, 0f, z);
+            SwapStructure(c, side);   // reaproveita prédios já construídos
             idx++;
         }
     }
@@ -713,6 +721,10 @@ public partial class RunnerGame : MonoBehaviour
     void ResetRun()
     {
         ResetRogue();
+        ResetRunDeck();
+        ResetRules();
+        ResetPacing();
+        ResetSkyTransit();
         for (int i = obstacles.Count - 1; i >= 0; i--)
             if (obstacles[i] != null) Destroy(obstacles[i].gameObject);
         obstacles.Clear();
@@ -789,6 +801,7 @@ public partial class RunnerGame : MonoBehaviour
 
     void StartRun()
     {
+        if (Meta.DailyMode) Random.InitState(Meta.DailySeed);   // desafio do dia: mesmo baralho para todos
         ResetRun();
         ApplyProphetAndTemple();
         state = RunnerState.Playing;
@@ -802,6 +815,7 @@ public partial class RunnerGame : MonoBehaviour
         cardStacks[c.id] = Stacks(c) + 1;
         history.Add(c);
         c.apply(this);
+        OnCardGained(c);
     }
 
     RunnerCard FindCard(string id)
@@ -824,19 +838,28 @@ public partial class RunnerGame : MonoBehaviour
         stats.rerolls += prophet.extraRerolls + T("sabedoria");
         stats.scoreMul += 0.15f * T("heranca");
         foreach (var id in prophet.startCards) GrantCard(FindCard(id));
-        // Primícias: cartas comuns/raras aleatórias
+        // Primícias: as primeiras cartas comuns/raras do seu baralho
+        offerIsBoss = false;
         for (int i = 0; i < T("primicias"); i++)
         {
-            offerIsBoss = false;
             for (int tries = 0; tries < 10; tries++)
             {
-                var roll = RollOffer(1);
+                var roll = DrawCards(1);
+                ReturnHand();
                 if (roll.Count == 0) break;
                 var c = roll[0];
-                if (c.curse || c.isWeapon || c.rarity > Rarity.Raro) continue;
+                if (c.curse || c.rarity > Rarity.Raro) continue;
                 GrantCard(c);
                 break;
             }
+        }
+        if (Meta.OathOn("pragas")) AddPlague("praga_ras", 2);
+        if (Meta.DailyMode)
+        {
+            var rule = FindCard(Meta.DailyRule);
+            GrantCard(rule);
+            Banner("DESAFIO DO DIA", prophet.name + "  •  " + (rule != null ? rule.name : "") + "  •  juramento: " + Meta.DailyOath.name);
+            bannerTime = 6f;
         }
         maxLives = Mathf.Clamp(maxLives, 1, hardMaxLives);
         lives = maxLives;
@@ -859,6 +882,7 @@ public partial class RunnerGame : MonoBehaviour
             PlayerPrefs.SetInt("runner_highscore", highScore);
             PlayerPrefs.Save();
         }
+        RecordDaily();
         // Talentos (Mt 25): moeda permanente para o Templo
         lastTalentsEarned = Meta.TalentsForRun(Score, bossesDefeated, level, finalBeaten);
         Meta.Talents += lastTalentsEarned;
@@ -907,11 +931,15 @@ public partial class RunnerGame : MonoBehaviour
         if (popupTime > 0) popupTime -= udt;
         if (bannerTime > 0f && state == RunnerState.Playing) bannerTime -= udt;
         UpdateFloats(udt);
+        UpdatePerf(udt);
+        UpdateSkyFlash(udt);
+        if (trailerActive && UpdateTrailer(udt)) return;   // abertura: o clique que pula não inicia o jogo
 
         switch (state)
         {
             case RunnerState.Menu:
             {
+                Meta.DailyMode = false;
                 if (menuPanel == 0 && MenuBackPressed()) break;
                 string mg = MenuMinigamePressed();
                 if (mg != null) { menuPanel = 0; StartMinigame(mg); }
@@ -980,6 +1008,14 @@ public partial class RunnerGame : MonoBehaviour
                 UpdateStable(udt);
                 break;
 
+            case RunnerState.Deck:
+                UpdateDeckEditor(udt);
+                break;
+
+            case RunnerState.Codex:
+                UpdateCodex();
+                break;
+
             case RunnerState.GameOver:
                 if (Time.unscaledTime - gameOverTime > 0.8f && !MouseOverUI() && ConfirmPressed()) StartRun();
                 break;
@@ -1011,7 +1047,7 @@ public partial class RunnerGame : MonoBehaviour
                     break;
                 }
                 runTime += dt;
-                speed = Mathf.Min(maxSpeed, startSpeed + accel * runTime) * stats.runSpeedMul * (player.flying ? 1.1f : 1f);
+                speed = Mathf.Min(maxSpeed, startSpeed + accel * runTime) * stats.runSpeedMul * (player.flying ? 1.1f * SkySpeedMul : 1f);
                 if (racing) speed = player.carSpeed;
                 if (passover) speed *= 0.85f;
                 if (jericho) speed = jerichoSpeed;
@@ -1033,6 +1069,9 @@ public partial class RunnerGame : MonoBehaviour
 
                 UpdateTrack();
                 UpdateBlessings(dt);
+                UpdateRules(dt);
+                UpdatePacing(dt);
+                UpdateChampion(dt);
                 UpdateRelics(dt);
                 UpdateDarkness(dt);
                 UpdateHazards();
@@ -1045,6 +1084,10 @@ public partial class RunnerGame : MonoBehaviour
                 {
                     flightWarn -= dt;
                     if (flightWarn <= 0f) StartFlight();
+                }
+                else if (player.flying && skyTransit)
+                {
+                    UpdateSkyTransit(dt);   // Travessia dos Céus entre regiões
                 }
                 else if (player.flying)
                 {
@@ -1158,11 +1201,12 @@ public partial class RunnerGame : MonoBehaviour
     /// Sorteia as cartas e, se alguma evolução estiver pronta, ela aparece garantida na primeira posição.
     List<RunnerCard> RollOfferWithEvolution(int n)
     {
-        var o = RollOffer(n);
+        // nível normal: saca do baralho; recompensa (chefe, loja, altar...): coleção + uma carta NOVA
+        var o = offerIsBoss ? RollGoodOffer(n) : DrawOffer(n);
         foreach (var evo in Evolutions.All)
         {
             if (!evo.Ready(this)) continue;
-            if (o.Count >= n && o.Count > 0) o.RemoveAt(o.Count - 1);
+            if (o.Count >= n && o.Count > 0) RemoveFromOffer(o, o.Count - 1);
             o.Insert(0, evo.Card);
             break;
         }
@@ -1172,12 +1216,12 @@ public partial class RunnerGame : MonoBehaviour
     void OpenCardChoice(bool bossReward)
     {
         offerIsBoss = bossReward;
-        offer = RollOfferWithEvolution(stats.choices);
+        offer = RollOfferWithEvolution(ChoiceCount());
         if (offer.Count == 0)
         {
-            if (bossReward) { prevCardScore = Score; nextCardScore = Score + cardStepBase; RunAfterCard(); return; }
+            if (bossReward) { prevCardScore = Score; nextCardScore = Score + CardStep(); RunAfterCard(); return; }
             prevCardScore = nextCardScore;
-            nextCardScore += cardStepBase;
+            nextCardScore += CardStep();
             return;
         }
         state = RunnerState.LevelUp;
@@ -1186,45 +1230,6 @@ public partial class RunnerGame : MonoBehaviour
         selected = 0;
         levelUpOpenTime = Time.unscaledTime;
         Play(sLevel, 0.8f);
-    }
-
-    List<RunnerCard> RollOffer(int n)
-    {
-        var pool = new List<RunnerCard>();
-        foreach (var c in CardDB.All)
-            if (Stacks(c) < c.maxStacks && (c.cond == null || c.cond(this)))
-            {
-                if (prophet != null && prophet.meleeOnly && c.isWeapon && c.id != "arma_espada" && c.id != "arma_lanca" && c.id != "arma_martelo") continue;
-                pool.Add(c);
-            }
-
-        var result = new List<RunnerCard>();
-        float[] weights = offerIsBoss
-            ? new[] { 0f, 15f, 55f, 30f + bossesDefeated * 5f }   // recompensa de chefe: só cartas boas
-            : new[] { 60f, 28f + level * 1.5f, 9f + level * 1.0f, 2.5f + level * 0.4f };
-
-        for (int i = 0; i < n && pool.Count > 0; i++)
-        {
-            float total = 0f;
-            for (int r = 0; r < 4; r++)
-                if (pool.Exists(c => (int)c.rarity == r)) total += weights[r];
-
-            if (total <= 0f) { weights[0] = 1f; total = 1f; }
-            float roll = Random.value * total;
-            int chosenRarity = 0;
-            for (int r = 0; r < 4; r++)
-            {
-                if (!pool.Exists(c => (int)c.rarity == r)) continue;
-                chosenRarity = r;
-                if (roll < weights[r]) break;
-                roll -= weights[r];
-            }
-            var candidates = pool.FindAll(c => (int)c.rarity == chosenRarity);
-            var pick = candidates[Random.Range(0, candidates.Count)];
-            result.Add(pick);
-            pool.Remove(pick);
-        }
-        return result;
     }
 
     bool CardInputReady => Time.unscaledTime - levelUpOpenTime > 0.45f;
@@ -1279,7 +1284,7 @@ public partial class RunnerGame : MonoBehaviour
     {
         if (rerollsLeft <= 0) return;
         rerollsLeft--;
-        offer = RollOfferWithEvolution(stats.choices);
+        offer = RollOfferWithEvolution(ChoiceCount());
         selected = Mathf.Clamp(selected, 0, Mathf.Max(0, offer.Count - 1));
         Sfx("embaralhar", 0.8f);
     }
@@ -1292,6 +1297,12 @@ public partial class RunnerGame : MonoBehaviour
     void ChooseCard(int i)
     {
         if (state != RunnerState.LevelUp || chooseIdx >= 0 || i < 0 || i >= offer.Count) return;
+        if (offer[i].plague && offer.Exists(c => !c.plague))
+        {
+            ShowPopup("PRAGA: NÃO PODE SER ESCOLHIDA");
+            Sfx("clique", 0.5f, 0.1f, 0.05f);
+            return;
+        }
         chooseIdx = i;
         chooseT = 0f;
         selected = i;
@@ -1302,9 +1313,17 @@ public partial class RunnerGame : MonoBehaviour
     {
         if (state != RunnerState.LevelUp || i < 0 || i >= offer.Count) return;
         var card = offer[i];
-        cardStacks[card.id] = Stacks(card) + 1;
-        history.Add(card);
-        card.apply(this);
+        if (!card.plague)
+        {
+            cardStacks[card.id] = Stacks(card) + 1;
+            history.Add(card);
+            card.apply(this);
+            ApplyExtraCopies(card);   // Gideão / carta ungida
+        }
+        ResolveDeckChoice(card, offerIsBoss);
+        offerHasNova = false;
+        OnCardGained(card);
+        if (!offerIsBoss) TickPlenty();   // descarte, carta nova liberada, recompensa entra no baralho
         if (stats.dailyBread > 0) Heal(stats.dailyBread);   // Pão Diário
         if (card.isEvolution)
         {
@@ -1323,12 +1342,12 @@ public partial class RunnerGame : MonoBehaviour
         if (offerIsBoss)
         {
             prevCardScore = Score;
-            nextCardScore = Score + Mathf.RoundToInt((cardStepBase + level * cardStepPerLevel) * stats.cardStepMul);
+            nextCardScore = Score + CardStep();
         }
         else
         {
             prevCardScore = nextCardScore;
-            nextCardScore += Mathf.RoundToInt((cardStepBase + level * cardStepPerLevel) * stats.cardStepMul);
+            nextCardScore += CardStep();
             if (bossEveryLevels > 0 && level % bossEveryLevels == 0)
             {
                 bossPending = true;
@@ -1353,9 +1372,11 @@ public partial class RunnerGame : MonoBehaviour
         float pz = player.transform.position.z;
         while (nextSpawnZ < pz + 120f)
         {
-            if (flight) SpawnFlightRow(nextSpawnZ);
+            // limite de objetos na pista ao mesmo tempo (mantém o FPS estável)
+            if (obstacles.Count >= MaxObstacles) { nextSpawnZ += 6f; continue; }
+            if (flight) { if (skyTransit) SpawnSkyRow(nextSpawnZ); else SpawnFlightRow(nextSpawnZ); }
             else SpawnRow(nextSpawnZ);
-            nextSpawnZ += Mathf.Max(9f, speed * Random.Range(0.9f, 1.35f) * Mathf.Lerp(1f, 0.72f, Difficulty) / (1f + LevelThreat * 0.22f));
+            nextSpawnZ += Mathf.Max(8.5f, speed * Random.Range(0.85f, 1.3f) * Mathf.Lerp(0.95f, 0.66f, Difficulty) / (1f + Mathf.Min(LevelThreat, 4.5f) * 0.24f)) * (flight ? 1f : SectionSpacing);
         }
     }
 
@@ -1374,7 +1395,8 @@ public partial class RunnerGame : MonoBehaviour
     {
         SpawnRowBase(z);
         // níveis altos: às vezes vem uma segunda leva logo atrás
-        if (LevelThreat > 0.5f && Random.value < Mathf.Min(0.45f, LevelThreat * 0.18f))
+        if ((LevelThreat > 0.5f && Random.value < Mathf.Min(0.45f, LevelThreat * 0.18f))
+            || (PacingActive && section == Section.Emboscada && Random.value < 0.2f))   // emboscada: segunda leva
         {
             int lane = Random.Range(0, 3);
             float zz = z + Random.Range(5f, 8f);
@@ -1406,11 +1428,17 @@ public partial class RunnerGame : MonoBehaviour
             return;
         }
 
-        if (lives < maxLives && !Meta.OathOn("jejum") && Random.value < 0.045f)
+        // trecho de descanso: siclos e caravanas
+        if (SpawnCalmRow(z, lanes)) return;
+
+        if (lives < maxLives && !Meta.OathOn("jejum") && Random.value < 0.03f)
         {
             SpawnHealth(lanes[0], z);
             return;
         }
+
+        // caravana: carroças compridas para correr lá em cima
+        if (TrySpawnPlatforms(z, lanes)) return;
 
         // obstáculos novos (pisão, indestrutíveis, fundibulários, saltadores)
         if (Random.value < HazardChance)
@@ -1548,7 +1576,7 @@ public partial class RunnerGame : MonoBehaviour
         Prim(PrimitiveType.Cube, t, new Vector3(0f, 0.8f * s, 0f), new Vector3(0.1f, 0.2f, 0.1f) * s, Gold);
     }
 
-    bool RollElite() => Random.value < 0.02f + Difficulty * 0.15f + LevelThreat * 0.08f;
+    bool RollElite() => Random.value < Mathf.Min(0.35f, 0.02f + Difficulty * 0.15f + LevelThreat * 0.06f);
 
     void SpawnTarget(int lane, float z)
     {
@@ -1622,7 +1650,7 @@ public partial class RunnerGame : MonoBehaviour
 
     public void SpawnEnemyShot(Vector3 pos)
     {
-        SpawnEnemyShot(pos, new Vector3(0f, 0f, -(12f + LevelThreat * 3f)), 0f);
+        SpawnEnemyShot(pos, new Vector3(0f, 0f, -(12f + Mathf.Min(LevelThreat, 4.5f) * 3f)), 0f);
     }
 
     public RunnerObstacle SpawnEnemyShot(Vector3 pos, Vector3 velocity, float homing)
@@ -1951,9 +1979,9 @@ public partial class RunnerGame : MonoBehaviour
         // rastro de sombra do anjo
         if (Random.value < (IsMobile ? 0.25f : 0.5f))
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.03f, 0.03f, 0.05f));
+            MeshRenderer goR;
+            var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+            goR.sharedMaterial = Mat(new Color(0.03f, 0.03f, 0.05f));
             go.transform.position = player.transform.position + new Vector3(Random.Range(-0.5f, 0.5f), Random.Range(-0.6f, 0.6f), -0.6f);
             go.transform.localScale = Vector3.one * Random.Range(0.15f, 0.35f);
             var d = go.AddComponent<RunnerDebris>();
@@ -2013,7 +2041,7 @@ public partial class RunnerGame : MonoBehaviour
         int pts = Mathf.RoundToInt(80 * Mathf.Min(passCombo, 8) * stats.scoreMul);
         killScore += pts;
         Vector3 p = o.transform.position;
-        AddFloat(p + Vector3.up * 2.4f, "JULGADA +" + pts, new Color(0.75f, 0.5f, 1f), passCombo > 2);
+        if (TextMode == 2 || passCombo % 5 == 0) AddFloat(p + Vector3.up * 2.4f, "JULGADA x" + passCombo, new Color(0.75f, 0.5f, 1f), false);
         // a casa escurece e solta uma sombra
         foreach (var r in o.GetComponentsInChildren<Renderer>()) r.sharedMaterial = Mat(new Color(0.12f, 0.1f, 0.12f));
         Explode(p + Vector3.up * 0.5f, new Color(0.08f, 0.05f, 0.1f), 10);
@@ -2509,7 +2537,7 @@ public partial class RunnerGame : MonoBehaviour
         o.rivalStun = Mathf.Max(o.rivalStun, 0.7f);
         Explode(at, o.mainColor, 3);
         PlayClank();
-        if (Random.value < 0.25f) AddFloat(at + Vector3.up, "RODOU!", new Color(1f, 0.8f, 0.3f), false);
+        if (TextMode == 2 && Random.value < 0.25f) AddFloat(at + Vector3.up, "RODOU!", new Color(1f, 0.8f, 0.3f), false);
     }
 
     void EndRace()
@@ -2560,7 +2588,7 @@ public partial class RunnerGame : MonoBehaviour
         bossPending = false;
         int tier = bossesDefeated;
         bool final = bossesDefeated + 1 == finalBossNumber;
-        float hp = Mathf.Max(30f, stats.EstimatedDps * 0.75f * (22f + 6f * tier));
+        float hp = Mathf.Max(36f, stats.EstimatedDps * 0.75f * (25f + 7f * tier));
         if (final) hp *= 2.2f;
         hp *= BossHpMul();
         var c = new Color(0.3f, 0.05f, 0.09f);
@@ -2604,13 +2632,17 @@ public partial class RunnerGame : MonoBehaviour
     void OnBossDefeated(Vector3 pos)
     {
         bool wasFinal = boss != null && boss.isFinal;
+        if (boss != null && !trailerActive) Meta.MarkSeen("boss", boss.bossName);
+        RestartPacingAfterBoss();
         if (boss != null) boss.CleanupAll(true);
         boss = null;
         bossesDefeated++;
-        Heal(2);
+        Heal(1);
         EndPath();
         AddSiclos(25, pos + Vector3.up * 3f);
-        SetBiome(Biomes.ForBosses(bossesDefeated, egyptAfterBoss, romeAfterBoss, sheolAfterBoss), true);
+        var nextBiome = Biomes.ForBosses(bossesDefeated, egyptAfterBoss, romeAfterBoss, sheolAfterBoss);
+        bool travel = nextBiome != Theme && !wasFinal;   // mudou de região: Travessia dos Céus
+        if (!travel) SetBiome(nextBiome, true);
         FxSphere(pos, 9f, new Color(1f, 0.8f, 0.3f));
         Explode(pos, new Color(1f, 0.8f, 0.3f), 40);
         shake = 1f;
@@ -2618,7 +2650,7 @@ public partial class RunnerGame : MonoBehaviour
         ShowPopup("CHEFE DERROTADO!");
         nextSpawnZ = player.transform.position.z + 45f;
         offerTitle = "CHEFE DERROTADO!";
-        offerSub = "Recompensa: escolha uma carta rara, épica ou lendária (+2 vidas)";
+        offerSub = "Recompensa: escolha uma carta rara, épica ou lendária (+1 vida)";
         if (wasFinal)
         {
             finalBeaten = true;
@@ -2633,6 +2665,13 @@ public partial class RunnerGame : MonoBehaviour
             ShowPopup("VITÓRIA!");
             bannerTime = 0f;
             StartVictory(pos);   // cena da vitória → Modo Infinito → recompensas
+            return;
+        }
+        offerHasNova = Random.value < 0.4f;   // às vezes o chefe deixa uma carta nova
+        if (travel)
+        {
+            // primeiro a viagem pelos céus; as recompensas vêm quando pousar na nova região
+            StartSkyTransit(nextBiome);
             return;
         }
         AfterBossRewards();
@@ -2767,14 +2806,27 @@ public partial class RunnerGame : MonoBehaviour
 
     public RunnerBullet FireBullet(Vector3 pos, float vx, float vz, float dmg, float size, float life, int pierce, float explode, float homing, Color color)
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        Destroy(go.GetComponent<Collider>());
-        go.name = "Bullet";
-        go.GetComponent<Renderer>().sharedMaterial = Glow(color);
+        // tiros reaproveitados (sem criar e destruir objetos a cada disparo)
+        var b = RunnerBullet.Rent();
+        GameObject go;
+        if (b == null)
+        {
+            MeshRenderer r;
+            go = NewPrim(PrimitiveType.Sphere, out r, false);
+            go.name = "Bullet";
+            b = go.AddComponent<RunnerBullet>();
+            b.rend = r;
+        }
+        else
+        {
+            go = b.gameObject;
+            go.SetActive(true);
+        }
+        b.ResetShot();
+        b.rend.sharedMaterial = Glow(color);
         go.transform.position = pos;
         go.transform.localScale = new Vector3(0.18f, 0.18f, 0.6f) * size;
         go.transform.rotation = Quaternion.LookRotation(new Vector3(vx, 0f, vz));
-        var b = go.AddComponent<RunnerBullet>();
         b.vx = vx;
         b.vz = vz;
         b.damage = dmg;
@@ -2821,7 +2873,13 @@ public partial class RunnerGame : MonoBehaviour
     {
         if (o == null || o.dead) return;
         bool crit = canCrit && Random.value < stats.critChance;
-        if (crit) { dmg *= stats.critMul; Sfx("crit", 0.4f, 0.1f, 0.09f); }
+        if (crit)
+        {
+            dmg *= stats.critMul;
+            Sfx("crit", 0.4f, 0.1f, 0.09f);
+            if (stats.Melee || stats.Cooldown >= 0.3f) shake = Mathf.Max(shake, 0.12f);   // armas pesadas: tranco na câmera
+        }
+        if (o.champion) dmg = ChampionDamageMod(o, dmg >= 9999f ? o.maxHp * 0.15f : dmg, crit);
 
         if (o.type == ObType.Boss)
         {
@@ -2833,7 +2891,7 @@ public partial class RunnerGame : MonoBehaviour
                 dmg = b.Absorb(dmg);
                 if (dmg <= 0f)
                 {
-                    AddFloat(at + Vector3.up * 0.6f, before < 10f ? before.ToString("0.#") : Mathf.RoundToInt(before).ToString(), new Color(0.4f, 0.9f, 1f), false);
+                    if (TextMode == 2) AddFloat(at + Vector3.up * 0.6f, before < 10f ? before.ToString("0.#") : Mathf.RoundToInt(before).ToString(), new Color(0.4f, 0.9f, 1f), false);
                     PlayClank();
                     return;
                 }
@@ -2845,24 +2903,25 @@ public partial class RunnerGame : MonoBehaviour
         if (stats.slingLevel > 0 && (o.elite || o.type == ObType.Tank || o.type == ObType.Boss || o.type == ObType.BossDrone))
             dmg *= 1f + 0.35f * stats.slingLevel;
         if (stats.wrathLevel > 0) dmg *= 1f + 0.12f * stats.wrathLevel * Mathf.Max(0, maxLives - lives);
-        if (stats.mosesStaff && o.type != ObType.Boss && o.type != ObType.EnemyShot && Random.value < stats.mosesChance)
+        if (stats.mosesStaff && o.type != ObType.Boss && !o.champion && o.type != ObType.EnemyShot && Random.value < stats.mosesChance)
         {
             dmg = 99999f;
-            AddFloat(at + Vector3.up, "PÓ!", new Color(0.9f, 0.85f, 0.6f), true);
+            AddFloat(at + Vector3.up, "PÓ!", new Color(0.9f, 0.85f, 0.6f), false);
             Sfx("po", 0.7f, 0.1f, 0.1f);
         }
 
-        if (dmg < 1000f)
+        if (dmg < 1000f && (canCrit || crit || dmg >= stats.Damage * 2.5f))   // só acertos diretos e golpes grandes (menos números na tela)
         {
-            string txt = dmg < 10f ? dmg.ToString("0.#") : Mathf.RoundToInt(dmg).ToString();
-            AddFloat(at + Vector3.up * 0.6f, crit ? txt + "!" : txt, crit ? new Color(1f, 0.85f, 0.1f) : Color.white, crit);
+            AddDamageNumber(at + Vector3.up * 0.6f, dmg, crit);
         }
 
+        dmg = StatusDamageMods(o, dmg);
         if (o.TakeDamage(dmg)) DestroyObstacle(o, true);
         else
         {
             PlayClank();
-            Explode(at, o.mainColor, 3);
+            if (RunnerDebris.Live < DebrisBudget / 3) Explode(at, o.mainColor, 2);
+            OnEnemyHit(o, canCrit);   // fogo, água, raio, confusão
         }
     }
 
@@ -2878,7 +2937,7 @@ public partial class RunnerGame : MonoBehaviour
             kills++;
             int pts = Mathf.RoundToInt(o.points * stats.scoreMul);
             killScore += pts;
-            AddFloat(pos + Vector3.up * 1.4f, "+" + pts, new Color(0.6f, 1f, 0.6f), false);
+            if (o.elite || o.type == ObType.Tank) AddFloat(pos + Vector3.up * 1.4f, "+" + pts, new Color(0.6f, 1f, 0.6f), false);
             OnKillReward(o, pos);
 
             if (stats.mana && o.type != ObType.EnemyShot)
@@ -2920,7 +2979,10 @@ public partial class RunnerGame : MonoBehaviour
             }
         }
 
-        Explode(pos, o.mainColor, o.type == ObType.EnemyShot ? 6 : (o.type == ObType.Tank ? 26 : 14));
+        if (byPlayer) OnEnemyKilled(o, pos);
+        if (byPlayer && o.champion) OnChampionKilled(o, pos);
+        else if (byPlayer && (o.elite || o.type == ObType.Tank)) { shake = Mathf.Max(shake, 0.3f); Sfx("impacto", 0.7f, 0.08f, 0.1f); }
+        Explode(pos, o.mainColor, o.type == ObType.EnemyShot ? 4 : (o.type == ObType.Tank ? 16 : 9));
         PlayBoom();
         Destroy(o.gameObject);
 
@@ -2939,7 +3001,7 @@ public partial class RunnerGame : MonoBehaviour
         FxSphere(center, radius, new Color(1f, 0.55f, 0.15f));
         PlayBoom();
         shake = Mathf.Max(shake, Mathf.Min(0.35f, radius * 0.06f));
-        var list = new List<RunnerObstacle>(obstacles);
+        var list = SnapshotObstacles();
         foreach (var o in list)
         {
             if (o == null || o.dead || o == exclude || !o.Shootable) continue;
@@ -2951,6 +3013,7 @@ public partial class RunnerGame : MonoBehaviour
             if ((closest - center).sqrMagnitude <= radius * radius)
                 DamageEnemy(o, dmg, false, c);
         }
+        ReleaseList(list);
     }
 
     public void ChainLightning(RunnerObstacle from, float dmg)
@@ -2966,7 +3029,9 @@ public partial class RunnerGame : MonoBehaviour
             Zap(cur, np);
             if (i == 0) Sfx("zap", 0.55f, 0.12f, 0.12f);
             visited.Add(next);
+            hitKind = HitShock;
             DamageEnemy(next, dmg * stats.chainMul, false, np);
+            hitKind = 0;
             cur = np;
         }
     }
@@ -2976,21 +3041,28 @@ public partial class RunnerGame : MonoBehaviour
         FxSphere(center, radius * 0.5f, new Color(0.4f, 0.9f, 1f));
         shake = 0.6f;
         Sfx("nova", 0.9f, 0.04f, 0.2f);
-        var list = new List<RunnerObstacle>(obstacles);
+        var list = SnapshotObstacles();
         foreach (var o in list)
         {
             if (o == null || o.dead || !o.Shootable) continue;
             if ((o.transform.position - center).sqrMagnitude <= radius * radius)
                 DamageEnemy(o, 99999f, false, o.transform.position);
         }
+        ReleaseList(list);
     }
 
     void HurtPlayer(RunnerObstacle o)
     {
+        if (trailerActive)   // demo da abertura: ninguém se machuca, o obstáculo só some
+        {
+            if (o != null && !o.dead && o.type != ObType.Boss) DestroyObstacle(o, false);
+            return;
+        }
         if (stats.retaliation) Nova(player.transform.position, 20f);
         if (o != null && !o.dead && o.type != ObType.Boss) DestroyObstacle(o, false);
 
         if (RelicBlocksHit()) return;
+        if (FaithMiracle()) return;   // Fé 5
         if (stats.shieldLevel > 0 && shieldReady)
         {
             shieldReady = false;
@@ -3009,6 +3081,7 @@ public partial class RunnerGame : MonoBehaviour
 
         lives--;
         Vibrate();
+        if (stats.elijahMantle && !bulletHell) for (int k = 0; k < 3; k++) SkyFireStrike(player.transform.position);
         if (boss != null) boss.OnPlayerHurt();
         player.invuln = stats.invulnTime;
         shake = 0.5f;
@@ -3036,16 +3109,19 @@ public partial class RunnerGame : MonoBehaviour
     void CheckPlayerCollisions()
     {
         Vector3 pc = player.transform.position;
-        var list = new List<RunnerObstacle>(obstacles);
+        var list = SnapshotObstacles();
+        try
+        {
         foreach (var o in list)
         {
-            if (o == null || o.dead) continue;
+            if (o == null || o.dead || o.type == ObType.Platform) continue;
             if (!o.Overlaps(pc, player.Half)) continue;
+            if (o.type == ObType.Coin) { PickCoin(o); continue; }
 
             if (o.type == ObType.PlaneBox || o.type == ObType.CarBox || o.type == ObType.ShipBox || o.type == ObType.AngelBox || o.type == ObType.BabelBox || o.type == ObType.JerichoBox || o.type == ObType.GoliathBox)
             {
                 DestroyObstacle(o, false);
-                if (BossFight || FlightEvent) continue;   // chefe a caminho: a caixa some
+                if (BossFight || FlightEvent || trailerActive) continue;   // chefe a caminho (ou demo): a caixa some
                 Sfx("reliquia", 0.7f, 0f, 0.5f);
                 if (o.type == ObType.PlaneBox) StartFlight();
                 else if (o.type == ObType.CarBox) StartRace();
@@ -3154,6 +3230,9 @@ public partial class RunnerGame : MonoBehaviour
             if ((o.type == ObType.FireJet || o.type == ObType.Spikes) && !o.hazardOn) continue;
             // inimigos que só morrem com um pisão
             if (o.stompable && TryStomp(o)) continue;
+            // Escada de Jacó: pisa em quase tudo que não é indestrutível
+            if (stats.jacobLadder && !o.Indestructible && o.type != ObType.Boss && o.type != ObType.EnemyShot && o.type != ObType.Shockwave
+                && (o.Shootable || o.type == ObType.Wall || o.type == ObType.Barrier) && TryStomp(o)) continue;
 
             if (stats.ram && o.Shootable && o.type != ObType.Boss)
             {
@@ -3167,6 +3246,8 @@ public partial class RunnerGame : MonoBehaviour
             HurtPlayer(o);
             if (state == RunnerState.GameOver) return;
         }
+        }
+        finally { ReleaseList(list); }
     }
 
     void Cleanup()
@@ -3194,8 +3275,61 @@ public partial class RunnerGame : MonoBehaviour
 
     void AddFloat(Vector3 pos, string text, Color color, bool big)
     {
-        if (floats.Count > 60) floats.RemoveAt(0);
-        floats.Add(new FloatText { pos = pos, text = text, color = color, t = 0.8f, big = big });
+        int mode = TextMode;   // 0 poucos, 1 normal, 2 todos
+        if (mode < 2)
+        {
+            // pontos soltos ("+150") já aparecem no placar: não precisam voar pela tela
+            if (IsScorePopup(text)) return;
+            // quanto mais rápido/difícil, menos textos pequenos
+            if (!big)
+            {
+                if (mode == 0) return;
+                int cap = LevelThreat > 2f || Difficulty > 0.8f ? 2 : 4;
+                if (smallFloats >= cap || Time.time - lastSmallFloat < 0.12f) return;
+            }
+        }
+        else if (!big && smallFloats >= 12) return;
+
+        // o mesmo texto que já está na tela só renova (não empilha)
+        foreach (var f in floats)
+            if (f.text == text && f.t > 0.2f) { f.t = f.big ? 1.1f : 0.6f; return; }
+
+        if (big)
+        {
+            int bigCap = mode == 2 ? 3 : 2, bigs = 0, oldest = -1;
+            for (int i = 0; i < floats.Count; i++) if (floats[i].big) { bigs++; if (oldest < 0) oldest = i; }
+            if (bigs >= bigCap && oldest >= 0) floats.RemoveAt(oldest);
+            // mensagens grandes perto do jogador não se sobrepõem: sobem um degrau
+            if (player != null && (pos - player.transform.position).sqrMagnitude < 9f)
+                pos += Vector3.up * 0.7f * Mathf.Min(bigs, bigCap - 1);
+        }
+        else lastSmallFloat = Time.time;
+        if (floats.Count > 24) floats.RemoveAt(0);
+        floats.Add(new FloatText { pos = pos, text = text, color = color, t = big ? 1.1f : 0.6f, big = big });
+    }
+
+    float lastSmallFloat, lastDamageNumber;
+    int smallFloats { get { int n = 0; foreach (var f in floats) if (!f.big) n++; return n; } }
+
+    static bool IsScorePopup(string t)
+    {
+        if (t.Length < 2 || t[0] != '+') return false;
+        for (int i = 1; i < t.Length; i++) if (!char.IsDigit(t[i])) return false;
+        return true;
+    }
+
+    /// Números de dano: POUCOS = nenhum; NORMAL = só críticos, no máximo ~4 por segundo; TODOS = como antes.
+    void AddDamageNumber(Vector3 at, float dmg, bool crit)
+    {
+        int mode = TextMode;
+        if (mode == 0) return;
+        if (mode == 1)
+        {
+            if (!crit || Time.time - lastDamageNumber < 0.25f) return;
+            lastDamageNumber = Time.time;
+        }
+        string txt = dmg < 10f ? dmg.ToString("0.#") : Mathf.RoundToInt(dmg).ToString();
+        AddFloat(at, crit ? txt + "!" : txt, crit ? new Color(1f, 0.85f, 0.1f) : Color.white, false);
     }
 
     void UpdateFloats(float udt)
@@ -3209,27 +3343,54 @@ public partial class RunnerGame : MonoBehaviour
         }
     }
 
+
     public void Explode(Vector3 pos, Color color, int count = 12)
     {
         if (IsMobile) count = Mathf.Max(2, count / 2);
+        // limite de pedacinhos na tela ao mesmo tempo
+        int room = DebrisBudget - RunnerDebris.Live;
+        if (room <= 0) return;
+        if (RunnerDebris.Live > DebrisBudget / 2) count = Mathf.Max(1, count / 2);
+        count = Mathf.Min(count, room);
+        var mat = Mat(color);
         for (int i = 0; i < count; i++)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.GetComponent<Renderer>().sharedMaterial = Mat(color);
+            // pedacinhos reaproveitados (sem criar e destruir objetos a cada explosão)
+            var d = RunnerDebris.Rent();
+            GameObject go;
+            if (d == null)
+            {
+                MeshRenderer goR;
+                go = NewPrim(PrimitiveType.Cube, out goR, false);
+                d = go.AddComponent<RunnerDebris>();
+                d.rend = goR;
+                d.pooled = true;
+            }
+            else
+            {
+                go = d.gameObject;
+                go.SetActive(true);
+            }
+            d.rend.sharedMaterial = mat;
             go.transform.position = pos + Random.insideUnitSphere * 0.4f;
+            go.transform.rotation = Quaternion.identity;
             float s = Random.Range(0.12f, 0.3f);
             go.transform.localScale = Vector3.one * s;
-            var d = go.AddComponent<RunnerDebris>();
             d.velocity = Random.insideUnitSphere * 7f + new Vector3(0, 5f, speed * 0.6f);
+            d.life = 0.8f;
+            d.gravity = true;
+            d.spin = true;
+            d.grow = false;
+            d.Begin();
         }
     }
 
     void FxSphere(Vector3 pos, float radius, Color color)
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        Destroy(go.GetComponent<Collider>());
-        go.GetComponent<Renderer>().sharedMaterial = Glow(color);
+        if (radius < 6f && RunnerDebris.LiveSpheres >= 5) return;   // muitas ondas juntas: pula as pequenas
+        MeshRenderer goR;
+        var go = RunnerGame.NewPrim(PrimitiveType.Sphere, out goR, false);
+        goR.sharedMaterial = Glow(color);
         go.transform.position = pos;
         go.transform.localScale = Vector3.one * radius * 1.6f;
         var d = go.AddComponent<RunnerDebris>();
@@ -3238,13 +3399,14 @@ public partial class RunnerGame : MonoBehaviour
         d.spin = false;
         d.grow = true;
         d.life = 0.22f;
+        d.countsAsSphere = true;
     }
 
     void Zap(Vector3 a, Vector3 b)
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        Destroy(go.GetComponent<Collider>());
-        go.GetComponent<Renderer>().sharedMaterial = Glow(new Color(0.6f, 0.85f, 1f));
+        MeshRenderer goR;
+        var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+        goR.sharedMaterial = Glow(new Color(0.6f, 0.85f, 1f));
         Vector3 dir = b - a;
         go.transform.position = (a + b) * 0.5f;
         if (dir.sqrMagnitude > 0.0001f) go.transform.rotation = Quaternion.LookRotation(dir);
@@ -3293,7 +3455,8 @@ public partial class RunnerGame : MonoBehaviour
     /// Escolhe a música pelo momento do jogo e pela região.
     string MusicId()
     {
-        if (state == RunnerState.Menu || state == RunnerState.Temple || state == RunnerState.Stable) return "menu";
+        if (trailerActive) return TrailerMusic();
+        if (state == RunnerState.Menu || state == RunnerState.Temple || state == RunnerState.Stable || state == RunnerState.Deck || state == RunnerState.Codex) return "menu";
         if (state == RunnerState.Cutscene) return cineKind == 0 ? "jerusalem" : "vitoria";
         if (boss != null && boss.isFinal) return "satanas";
         if (boss != null || bossPending) return (bossesDefeated + 1 == finalBossNumber) ? "satanas" : "chefe";
@@ -3429,7 +3592,7 @@ public partial class RunnerGame : MonoBehaviour
             {
                 orbitTimer = 0.25f;
                 float dmg = stats.Damage * 0.35f * stats.orbitBlades;
-                var list = new List<RunnerObstacle>(obstacles);
+                var list = SnapshotObstacles();
                 foreach (var o in list)
                 {
                     if (o == null || o.dead || !o.Shootable || o.type == ObType.Boss) continue;
@@ -3437,6 +3600,7 @@ public partial class RunnerGame : MonoBehaviour
                     DamageEnemy(o, dmg, false, o.transform.position);
                     Sfx("laminas", 0.4f, 0.15f, 0.2f);
                 }
+                ReleaseList(list);
             }
         }
     }
@@ -3456,15 +3620,17 @@ public partial class RunnerGame : MonoBehaviour
         }
         if (best == null) return false;
         Vector3 c = best.transform.position;
-        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        Destroy(go.GetComponent<Collider>());
-        go.GetComponent<Renderer>().sharedMaterial = Glow(new Color(1f, 0.55f, 0.1f));
+        MeshRenderer goR;
+        var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+        goR.sharedMaterial = Glow(new Color(1f, 0.55f, 0.1f));
         go.transform.position = c + new Vector3(0f, 7f, 0f);
         go.transform.localScale = new Vector3(0.9f, 14f, 0.9f);
         var d = go.AddComponent<RunnerDebris>();
         d.gravity = false; d.spin = false; d.life = 0.3f;
         Sfx("fogo", 0.7f, 0.1f, 0.1f);
+        hitKind = HitFire;
         DamageEnemy(best, stats.Damage * 4f, true, c);
+        hitKind = 0;
         Blast(c, 2.5f, stats.Damage * 1.5f, best);
         return true;
     }
@@ -3509,7 +3675,7 @@ public partial class RunnerGame : MonoBehaviour
         foreach (var o in list)
         {
             if (o == null || o.dead || o.type == ObType.Boss || o.type == ObType.BossDrone || o.type == ObType.Rival
-                || o.type == ObType.HouseOpen || o.type == ObType.HouseBlood || o.Indestructible) continue;
+                || o.type == ObType.HouseOpen || o.type == ObType.HouseBlood || o.Indestructible || o.type == ObType.Platform || o.type == ObType.Coin) continue;
             float dz = o.transform.position.z - pp.z;
             if (dz < -2f || dz > 45f) continue;
             DestroyObstacle(o, o.Shootable && o.type != ObType.EnemyShot);
@@ -3540,7 +3706,7 @@ public partial class RunnerGame : MonoBehaviour
     /// Golpe corpo a corpo: acerta tudo que estiver na área à frente (e destrói bolas de fogo).
     public void MeleeAttack(Vector3 origin, float reach, float halfWidth, float dmg, RunnerWeapon w)
     {
-        var list = new List<RunnerObstacle>(obstacles);
+        var list = SnapshotObstacles();
         int hits = 0;
         foreach (var o in list)
         {
@@ -3557,6 +3723,7 @@ public partial class RunnerGame : MonoBehaviour
             if (stats.Explode > 0f) Blast(c, stats.Explode, dmg * 0.6f, o);
             hits++;
         }
+        ReleaseList(list);
         SpawnSlash(origin, Mathf.Min(reach, 5f), halfWidth, w);
         if (hits > 0) shake = Mathf.Max(shake, 0.12f + hits * 0.03f);
         if (hits > 0) Sfx("espada_hit", 0.55f, 0.12f, 0.06f, w.id == "martelo" ? 0.6f : 1f);
@@ -3583,9 +3750,9 @@ public partial class RunnerGame : MonoBehaviour
                 p = origin + new Vector3(Mathf.Sin(a) * rx, w.id == "martelo" ? -0.5f : 0.3f, 1.2f + Mathf.Cos(a) * Mathf.Min(reach, 2.5f));
                 rot = Quaternion.Euler(0f, a * Mathf.Rad2Deg + 90f, 0f);
             }
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.GetComponent<Renderer>().sharedMaterial = Glow(w.color);
+            MeshRenderer goR;
+            var go = RunnerGame.NewPrim(PrimitiveType.Cube, out goR, false);
+            goR.sharedMaterial = Glow(w.color);
             go.transform.position = p;
             go.transform.rotation = rot;
             go.transform.localScale = w.id == "lanca" ? new Vector3(0.12f, 0.12f, 1.4f) : new Vector3(0.12f, 0.06f, 0.9f);
@@ -3676,10 +3843,15 @@ public partial class RunnerGame : MonoBehaviour
         return sb.ToString();
     }
 
+    int lastGuiFrame = -1;
+    bool guiNewFrame;
+
     void OnGUI()
     {
         EnsureStyles();
-        if (Event.current.type == EventType.Layout)
+        guiNewFrame = Time.frameCount != lastGuiFrame;   // sem GUILayout: limpa no 1º evento de cada quadro
+        lastGuiFrame = Time.frameCount;
+        if (guiNewFrame)
         {
             RunnerTouch.ClearButtons();
             uiActions.Clear();
@@ -3695,11 +3867,12 @@ public partial class RunnerGame : MonoBehaviour
         float s = Mathf.Min(safe.height / 1080f, safe.width / 1280f);
         guiOffset = safe.position;
 
-        if (state != RunnerState.Menu && state != RunnerState.Cutscene && state != RunnerState.Stable) DrawWorldUI(s, sh);
+        if (!trailerActive && state != RunnerState.Menu && state != RunnerState.Cutscene && state != RunnerState.Stable && state != RunnerState.Deck && state != RunnerState.Codex) DrawWorldUI(s, sh);
 
         GUI.BeginGroup(safe);
         DrawScreens(s, safe.width, safe.height);
         GUI.EndGroup();
+        DrawSkyFlash(sw, sh);   // clarão da subida/descida da travessia
     }
 
     /// Botão de toque: desenha e registra a área para RunnerTouch.
@@ -3707,7 +3880,7 @@ public partial class RunnerGame : MonoBehaviour
     {
         Box(new Rect(r.x + 3, r.y + 3, r.width, r.height), new Color(0, 0, 0, 0.35f));
         Box(r, color);
-        var st = new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, wordWrap = true };
+        var st = Sty(cardSmall, al: TextAnchor.MiddleCenter, ww: 1);
         ShadowLabel(r, label, st, Color.white);
         RunnerTouch.SetButton(id, new Rect(r.x + guiOffset.x, r.y + guiOffset.y, r.width, r.height));
         return RunnerTouch.Pressed(id);
@@ -3743,7 +3916,18 @@ public partial class RunnerGame : MonoBehaviour
             DrawStable(s, W, H);
             return;
         }
+        if (state == RunnerState.Deck)
+        {
+            DrawDeckEditor(s, W, H);
+            return;
+        }
+        if (state == RunnerState.Codex)
+        {
+            DrawCodex(s, W, H);
+            return;
+        }
 
+        if (trailerActive) { DrawTrailer(s, W, H); return; }
         DrawHUD(s, W, H);
         if (RunnerTouch.UseTouchUI) DrawTouchControls(s, W, H);
 
@@ -3764,6 +3948,7 @@ public partial class RunnerGame : MonoBehaviour
             ActionButton("music_p", new Rect(btn.xMax + 14 * s, btn.y, 300 * s, bh), "Música: " + (mOn ? "LIGADA" : "DESLIGADA") + (RunnerTouch.UseTouchUI ? "" : "  [M]"),
                 mOn ? new Color(0.2f, 0.45f, 0.55f, 0.85f) : new Color(0.45f, 0.2f, 0.2f, 0.85f), s, ToggleMusic);
             DrawPauseOptions(s, W, H, btn);
+            DrawPerfButton(s, W);
             if (RunnerTouch.UseTouchUI)
             {
                 TouchButton("ps1", btn, lbl, bc);
@@ -3774,7 +3959,7 @@ public partial class RunnerGame : MonoBehaviour
                 bool hover = btn.Contains(e.mousePosition);
                 Box(new Rect(btn.x + 3, btn.y + 3, btn.width, btn.height), new Color(0, 0, 0, 0.35f));
                 Box(btn, hover ? Color.Lerp(bc, Color.white, 0.2f) : bc);
-                ShadowLabel(btn, lbl, new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(28 * s) }, Color.white);
+                ShadowLabel(btn, lbl, Sty(cardSmall, al: TextAnchor.MiddleCenter, fs: Mathf.RoundToInt(28 * s)), Color.white);
                 if (e.type == EventType.MouseDown && e.button == 0 && hover)
                 {
                     TogglePS1();
@@ -3783,7 +3968,7 @@ public partial class RunnerGame : MonoBehaviour
             }
 
             float panelBottom = devTools ? H - 120 * s : H * 0.86f;
-            DrawBuildPanel(s, W * 0.5f - 300 * s, H * 0.12f + 270 * s, 600 * s, panelBottom - (H * 0.12f + 270 * s));
+            DrawBuildPanel(s, W * 0.5f - 300 * s, H * 0.12f + 356 * s, 600 * s, panelBottom - (H * 0.12f + 356 * s));
 
             if (devTools)
             {
@@ -3792,7 +3977,7 @@ public partial class RunnerGame : MonoBehaviour
                 dw = Mathf.Min(dw, (W - 40 * s - gap * 4) / 5f);
                 float total = dw * 5 + gap * 4;
                 float x0 = W / 2 - total / 2, y0 = H - dh - 30 * s;
-                ShadowLabel(new Rect(0, y0 - 34 * s, W, 30 * s), "MODO DESENVOLVEDOR", new GUIStyle(cardSmall), new Color(1f, 0.6f, 0.3f));
+                ShadowLabel(new Rect(0, y0 - 34 * s, W, 30 * s), "MODO DESENVOLVEDOR", Sty(cardSmall), new Color(1f, 0.6f, 0.3f));
                 var devColor = new Color(0.55f, 0.3f, 0.05f, 0.85f);
                 if (DevButton("dev_boss3", new Rect(x0, y0, dw, dh), "PULAR P/ 3º CHEFE", devColor, s)) DevSkipToBoss(3);
                 else if (DevButton("dev_egypt", new Rect(x0 + dw + gap, y0, dw, dh), "IR PARA O EGITO", devColor, s)) DevSkipToBiome(Biomes.Egypt);
@@ -3833,7 +4018,7 @@ public partial class RunnerGame : MonoBehaviour
         bool hover = r.Contains(e.mousePosition);
         Box(new Rect(r.x + 3, r.y + 3, r.width, r.height), new Color(0, 0, 0, 0.35f));
         Box(r, hover ? Color.Lerp(c, Color.white, 0.2f) : c);
-        ShadowLabel(r, label, new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(24 * s) }, Color.white);
+        ShadowLabel(r, label, Sty(cardSmall, al: TextAnchor.MiddleCenter, fs: Mathf.RoundToInt(24 * s)), Color.white);
         if (e.type == EventType.MouseDown && e.button == 0 && hover)
         {
             e.Use();
@@ -3881,7 +4066,8 @@ public partial class RunnerGame : MonoBehaviour
         int guard = 0;
         while (level < targetLevel && guard++ < 200)
         {
-            var roll = RollOffer(1);
+            var roll = DrawOffer(1);
+            ReturnHand();
             if (roll.Count == 0) break;
             var c = roll[0];
             if (c.curse) continue;
@@ -3894,7 +4080,7 @@ public partial class RunnerGame : MonoBehaviour
         lives = maxLives;
         runTime = Mathf.Max(runTime, 40f + level * 12f);
         prevCardScore = Score;
-        nextCardScore = Score + Mathf.RoundToInt((cardStepBase + level * cardStepPerLevel) * stats.cardStepMul);
+        nextCardScore = Score + CardStep();
     }
 
     void DevResume(string msg)
@@ -4011,7 +4197,7 @@ public partial class RunnerGame : MonoBehaviour
 
     void DrawMenuMinigames(float s, float W, float H)
     {
-        if (Event.current.type == EventType.Layout) menuButtons.Clear();
+        if (guiNewFrame) menuButtons.Clear();
         int nGames = MenuGames.Length;
         float bw = 250 * s, bh = 66 * s, gap = 12 * s;
         float total = bw * nGames + gap * (nGames - 1);
@@ -4046,7 +4232,7 @@ public partial class RunnerGame : MonoBehaviour
                 bool hover = r.Contains(mouse);
                 Box(new Rect(r.x + 3, r.y + 3, r.width, r.height), new Color(0, 0, 0, 0.35f));
                 Box(r, hover ? Color.Lerp(cols[i], Color.white, 0.2f) : cols[i]);
-                ShadowLabel(r, label, new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(24 * s) }, Color.white);
+                ShadowLabel(r, label, Sty(cardSmall, al: TextAnchor.MiddleCenter, fs: Mathf.RoundToInt(24 * s)), Color.white);
             }
             menuButtons[id] = new Rect(r.x + guiOffset.x, r.y + guiOffset.y, r.width, r.height);
         }
@@ -4058,6 +4244,7 @@ public partial class RunnerGame : MonoBehaviour
         var abs = new Rect(r.x + guiOffset.x, r.y + guiOffset.y, r.width, r.height);
         uiRects.Add(abs);
         if (!enabled) c = new Color(0.25f, 0.25f, 0.25f, 0.7f);
+        if (Time.unscaledTime < uiBlockUntil) enabled = false;   // o toque que pulou a abertura não aperta botão do menu
         if (RunnerTouch.UseTouchUI)
         {
             TouchButton(id, r, label, c);
@@ -4068,7 +4255,7 @@ public partial class RunnerGame : MonoBehaviour
         bool hover = r.Contains(e.mousePosition);
         Box(new Rect(r.x + 3, r.y + 3, r.width, r.height), new Color(0, 0, 0, 0.35f));
         Box(r, hover && enabled ? Color.Lerp(c, Color.white, 0.2f) : c);
-        ShadowLabel(r, label, new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, wordWrap = true, fontSize = Mathf.RoundToInt(22 * s) }, enabled ? Color.white : new Color(0.7f, 0.7f, 0.7f));
+        ShadowLabel(r, label, Sty(cardSmall, al: TextAnchor.MiddleCenter, ww: 1, fs: Mathf.RoundToInt(22 * s)), enabled ? Color.white : new Color(0.7f, 0.7f, 0.7f));
         if (enabled && e.type == EventType.MouseDown && e.button == 0 && hover)
         {
             e.Use();
@@ -4101,7 +4288,7 @@ public partial class RunnerGame : MonoBehaviour
         float leftX = W * 0.5f - colW - 20 * s, rightX = W * 0.5f + 20 * s, top = H * 0.2f;
 
         // melhorias permanentes
-        ShadowLabel(new Rect(leftX, top - 40 * s, colW, 36 * s), "BÊNÇÃOS PERMANENTES", new GUIStyle(cardSmall), new Color(1f, 0.85f, 0.4f));
+        ShadowLabel(new Rect(leftX, top - 40 * s, colW, 36 * s), "BÊNÇÃOS PERMANENTES", Sty(cardSmall), new Color(1f, 0.85f, 0.4f));
         for (int i = 0; i < Meta.Upgrades.Count; i++)
         {
             var u = Meta.Upgrades[i];
@@ -4161,7 +4348,7 @@ public partial class RunnerGame : MonoBehaviour
         }
 
         var cur = Meta.Selected;
-        ShadowLabel(new Rect(W * 0.08f, H * 0.8f, W * 0.84f, 60 * s), cur.name + ": " + cur.desc, new GUIStyle(cardDesc) { alignment = TextAnchor.MiddleCenter }, cur.color);
+        ShadowLabel(new Rect(W * 0.08f, H * 0.8f, W * 0.84f, 60 * s), cur.name + ": " + cur.desc, Sty(cardDesc, al: TextAnchor.MiddleCenter), cur.color);
         if (templeMsgTime > 0f)
             ShadowLabel(new Rect(0, H * 0.75f, W, 40 * s), templeMsg, midStyle, new Color(1f, 1f, 0.6f));
         ActionButton("tpl_back", new Rect(W / 2 - 150 * s, H - 85 * s, 300 * s, 62 * s), "VOLTAR  (Esc)", new Color(0.3f, 0.3f, 0.35f, 0.85f), s, () => state = RunnerState.Menu);
@@ -4173,16 +4360,16 @@ public partial class RunnerGame : MonoBehaviour
     void DrawMenu(float s, float W, float H)
     {
         Box(new Rect(0, 0, W, H), new Color(0, 0, 0, 0.35f));
-        ShadowLabel(new Rect(0, H * 0.06f, W, 120 * s), "EZEQUIEL", new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(120 * s) }, new Color(1f, 0.85f, 0.2f));
-        ShadowLabel(new Rect(0, H * 0.06f + 118 * s, W, 40 * s), "de Jerusalém ao Sheol", new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(28 * s), fontStyle = FontStyle.Italic }, new Color(1f, 0.95f, 0.85f));
+        ShadowLabel(new Rect(0, H * 0.06f, W, 120 * s), "EZEQUIEL", Sty(bigStyle, fs: Mathf.RoundToInt(120 * s)), new Color(1f, 0.85f, 0.2f));
+        ShadowLabel(new Rect(0, H * 0.06f + 118 * s, W, 40 * s), "de Jerusalém ao Sheol", Sty(midStyle, fs: Mathf.RoundToInt(28 * s), fst: FontStyle.Italic), new Color(1f, 0.95f, 0.85f));
 
         // seletor de profeta (nome grande, descrição curta)
         var p = Meta.Selected;
         float pw = Mathf.Min(860 * s, W - 40 * s), ph = 112 * s;
         var pr = new Rect(W / 2 - pw / 2, H * 0.34f, pw, ph);
         Box(pr, new Color(0f, 0f, 0f, 0.4f));
-        ShadowLabel(new Rect(pr.x, pr.y + 6 * s, pr.width, 46 * s), p.name.ToUpper(), new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(40 * s) }, p.color);
-        ShadowLabel(new Rect(pr.x + 90 * s, pr.y + 54 * s, pr.width - 180 * s, 52 * s), p.desc, new GUIStyle(cardDesc) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(20 * s) }, new Color(1f, 1f, 1f, 0.85f));
+        ShadowLabel(new Rect(pr.x, pr.y + 6 * s, pr.width, 46 * s), p.name.ToUpper(), Sty(midStyle, fs: Mathf.RoundToInt(40 * s)), p.color);
+        ShadowLabel(new Rect(pr.x + 90 * s, pr.y + 54 * s, pr.width - 180 * s, 52 * s), p.desc, Sty(cardDesc, al: TextAnchor.MiddleCenter, fs: Mathf.RoundToInt(20 * s)), new Color(1f, 1f, 1f, 0.85f));
         ActionButton("pro_prev", new Rect(pr.x + 10 * s, pr.y + 26 * s, 70 * s, 60 * s), "◀", new Color(0.2f, 0.2f, 0.3f, 0.85f), s, () => Meta.Cycle(-1));
         ActionButton("pro_next", new Rect(pr.xMax - 80 * s, pr.y + 26 * s, 70 * s, 60 * s), "▶", new Color(0.2f, 0.2f, 0.3f, 0.85f), s, () => Meta.Cycle(1));
 
@@ -4190,28 +4377,36 @@ public partial class RunnerGame : MonoBehaviour
         var play = new Rect(W / 2 - 200 * s, pr.yMax + 26 * s, 400 * s, 84 * s);
         float pulse = 0.85f + 0.15f * Mathf.Sin(Time.unscaledTime * 3f);
         ActionButton("play", play, "JOGAR", new Color(0.75f * pulse, 0.55f * pulse, 0.1f, 0.95f), s, () => { menuPanel = 0; StartRun(); StartIntro(); });
+        float sideW = Mathf.Min(250 * s, (W - play.width) / 2f - 26 * s);
+        int best = Meta.DailyBest;
+        ActionButton("open_codex", new Rect(play.x - sideW - 16 * s, play.y + 6 * s, sideW, play.height - 12 * s), "LIVRO DA VIDA", new Color(0.32f, 0.24f, 0.12f, 0.92f), s, OpenCodex);
+        ActionButton("daily", new Rect(play.xMax + 16 * s, play.y + 6 * s, sideW, play.height - 12 * s),
+            "DESAFIO DO DIA\n" + Meta.DailyProphet.name + (best > 0 ? "  •  " + best : ""), new Color(0.15f, 0.32f, 0.42f, 0.92f), s, StartDaily);
 
         // linha de botões secundários
-        string[] labels = { "TEMPLO (" + Meta.Talents + ")", "ESTÁBULO", "MINI-JOGOS", "COMO JOGAR", "OPÇÕES" };
-        float bw = 210 * s, bh = 58 * s, gap = 12 * s;
-        float total = bw * 5 + gap * 4;
+        string[] labels = { "TEMPLO (" + Meta.Talents + ")", "BARALHO", "ESTÁBULO", "MINI-JOGOS", "COMO JOGAR", "OPÇÕES" };
+        int nb = labels.Length;
+        float bw = 200 * s, bh = 58 * s, gap = 10 * s;
+        float total = bw * nb + gap * (nb - 1);
         if (total > W - 30 * s) { float k = (W - 30 * s) / total; bw *= k; gap *= k; total = W - 30 * s; }
         float bx = W / 2 - total / 2, by = play.yMax + 26 * s;
         var col = new Color(0.22f, 0.2f, 0.28f, 0.88f);
-        ActionButton("open_temple", new Rect(bx, by, bw, bh), labels[0], new Color(0.4f, 0.3f, 0.08f, 0.9f), s, () => { menuPanel = 0; state = RunnerState.Temple; });
-        ActionButton("open_stable", new Rect(bx + (bw + gap), by, bw, bh), labels[1], new Color(0.3f, 0.22f, 0.12f, 0.9f), s, () => { menuPanel = 0; stableSpin = 0f; state = RunnerState.Stable; });
-        bx += bw + gap;
-        ActionButton("panel_games", new Rect(bx + (bw + gap), by, bw, bh), labels[2], menuPanel == 1 ? new Color(0.45f, 0.35f, 0.15f, 0.95f) : col, s, () => menuPanel = menuPanel == 1 ? 0 : 1);
-        ActionButton("panel_help", new Rect(bx + (bw + gap) * 2, by, bw, bh), labels[3], menuPanel == 2 ? new Color(0.45f, 0.35f, 0.15f, 0.95f) : col, s, () => menuPanel = menuPanel == 2 ? 0 : 2);
-        ActionButton("panel_opts", new Rect(bx + (bw + gap) * 3, by, bw, bh), labels[4], menuPanel == 3 ? new Color(0.45f, 0.35f, 0.15f, 0.95f) : col, s, () => menuPanel = menuPanel == 3 ? 0 : 3);
+        var on = new Color(0.45f, 0.35f, 0.15f, 0.95f);
+        System.Func<int, Rect> slot = i => new Rect(bx + i * (bw + gap), by, bw, bh);
+        ActionButton("open_temple", slot(0), labels[0], new Color(0.4f, 0.3f, 0.08f, 0.9f), s, () => { menuPanel = 0; state = RunnerState.Temple; });
+        ActionButton("open_deck", slot(1), labels[1], new Color(0.3f, 0.18f, 0.38f, 0.9f), s, OpenDeckEditor);
+        ActionButton("open_stable", slot(2), labels[2], new Color(0.3f, 0.22f, 0.12f, 0.9f), s, () => { menuPanel = 0; stableSpin = 0f; state = RunnerState.Stable; });
+        ActionButton("panel_games", slot(3), labels[3], menuPanel == 1 ? on : col, s, () => menuPanel = menuPanel == 1 ? 0 : 1);
+        ActionButton("panel_help", slot(4), labels[4], menuPanel == 2 ? on : col, s, () => menuPanel = menuPanel == 2 ? 0 : 2);
+        ActionButton("panel_opts", slot(5), labels[5], menuPanel == 3 ? on : col, s, () => menuPanel = menuPanel == 3 ? 0 : 3);
 
         if (menuNoteTime > 0f)
         {
             menuNoteTime -= Time.unscaledDeltaTime;
-            ShadowLabel(new Rect(0, H * 0.27f, W, 40 * s), menuNote, new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(26 * s) }, new Color(0.7f, 1f, 0.75f));
+            ShadowLabel(new Rect(0, H * 0.27f, W, 40 * s), menuNote, Sty(midStyle, fs: Mathf.RoundToInt(26 * s)), new Color(0.7f, 1f, 0.75f));
         }
         bool everWon = PlayerPrefs.GetInt("runner_final_win", 0) == 1;
-        ShadowLabel(new Rect(0, H - 52 * s, W, 40 * s), "Recorde  " + highScore + (everWon ? "   ★" : ""), new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(24 * s) }, new Color(1f, 0.9f, 0.6f));
+        ShadowLabel(new Rect(0, H - 52 * s, W, 40 * s), "Recorde  " + highScore + (everWon ? "   ★" : ""), Sty(cardSmall, fs: Mathf.RoundToInt(24 * s)), new Color(1f, 0.9f, 0.6f));
 
         if (menuPanel != 0) DrawMenuPanel(s, W, H, by + bh + 16 * s);
         DrawExitConfirm(s, W, H);
@@ -4223,11 +4418,11 @@ public partial class RunnerGame : MonoBehaviour
         var r = new Rect(W / 2 - pw / 2, top, pw, ph);
         uiRects.Add(new Rect(r.x + guiOffset.x, r.y + guiOffset.y, r.width, r.height));   // o painel não deixa o clique começar o jogo
         Box(r, new Color(0.05f, 0.04f, 0.06f, 0.92f));
-        var txt = new GUIStyle(cardDesc) { alignment = TextAnchor.UpperCenter, fontSize = Mathf.RoundToInt(22 * s), wordWrap = true };
+        var txt = Sty(cardDesc, al: TextAnchor.UpperCenter, fs: Mathf.RoundToInt(22 * s), ww: 1);
         if (menuPanel == 1)
         {
             menuGamesY = r.y + r.height * 0.5f - 33 * s;
-            ShadowLabel(new Rect(r.x, r.y + 14 * s, r.width, 30 * s), RunnerTouch.UseTouchUI ? "Toque num mini-jogo para jogar direto" : "Clique ou aperte 1-7", new GUIStyle(cardSmall), new Color(1f, 0.85f, 0.4f));
+            ShadowLabel(new Rect(r.x, r.y + 14 * s, r.width, 30 * s), RunnerTouch.UseTouchUI ? "Toque num mini-jogo para jogar direto" : "Clique ou aperte 1-7", Sty(cardSmall), new Color(1f, 0.85f, 0.4f));
             DrawMenuMinigames(s, W, H);
         }
         else if (menuPanel == 2)
@@ -4235,17 +4430,27 @@ public partial class RunnerGame : MonoBehaviour
             string controls = RunnerTouch.UseTouchUI
                 ? "Deslize ← → para trocar de faixa  •  deslize ↑ ou toque para pular  •  ↓ cai rápido  •  o tiro é automático"
                 : "A/D ou ← →  faixas   •   W / Espaço  pular   •   S  cair rápido   •   Q / Shift  tempo bala   •   Esc  pausar";
-            string tips = "Suba de nível e escolha cartas — combine as certas para EVOLUÇÕES.\n" +
+            string tips = "Suba de nível e escolha cartas sacadas do seu BARALHO — combine as certas para EVOLUÇÕES.\n" +
                           "Escudeiros e muralhas de barro: PULE EM CIMA.  Pedras, colossos e carros de guerra: DESVIE.\n" +
                           "A cada " + bossEveryLevels + " níveis vem um CHEFE. Depois dele: relíquia e escolha de caminho.\n" +
-                          "Ganhe Talentos em cada jornada e gaste no TEMPLO.";
+                          "Junte 3 ou 5 cartas da mesma FAMÍLIA (Fogo, Água, Guerra, Fé, Sinais) para bônus. Molhado + raio = choque!\n" +
+                          "Cartas NOVA! nas recompensas entram na sua coleção. Ganhe Talentos e gaste no TEMPLO e no BARALHO.";
             ShadowLabel(new Rect(r.x + 20 * s, r.y + 18 * s, r.width - 40 * s, 60 * s), controls, new GUIStyle(txt) { fontStyle = FontStyle.Bold }, new Color(0.9f, 0.95f, 1f));
             ShadowLabel(new Rect(r.x + 20 * s, r.y + 84 * s, r.width - 40 * s, r.height - 100 * s), tips, txt, new Color(1f, 1f, 1f, 0.85f));
         }
         else
         {
             float bw = Mathf.Min(320 * s, (r.width - 60 * s) / 3f), bh = 70 * s, gap = 16 * s;
-            float bx = r.center.x - (bw * 3 + gap * 2) / 2f, by = r.y + r.height / 2f - bh / 2f;
+            bh = Mathf.Min(bh, (r.height - 30 * s - gap * 2f) / 3f);
+            float bx = r.center.x - (bw * 3 + gap * 2) / 2f, by = r.y + (r.height - (bh * 3f + gap * 2f)) / 2f;
+            // rever a abertura (trailer)
+            ActionButton("opt_trailer", new Rect(bx + bw + gap, by + (bh + gap) * 2f, bw, bh), "▶  VER ABERTURA",
+                new Color(0.45f, 0.32f, 0.08f, 0.92f), s, StartTrailer);
+            // gráficos (automático / alta / média / baixa) + FPS
+            ActionButton("opt_quality", new Rect(bx, by + bh + gap, bw * 2 + gap, bh), QualityLabel + "   •   " + Mathf.RoundToInt(fpsShown) + " FPS",
+                new Color(0.2f, 0.3f, 0.45f, 0.9f), s, CycleQualityMode);
+            ActionButton("opt_texts", new Rect(bx + (bw + gap) * 2, by + bh + gap, bw, bh), "Textos: " + TextModeNames[TextMode],
+                new Color(0.3f, 0.25f, 0.45f, 0.9f), s, CycleTextMode);
             bool ps1On = ps1 != null && ps1.styleOn;
             ActionButton("opt_ps1", new Rect(bx, by, bw, bh), "Filtro PS1: " + (ps1On ? "LIGADO" : "DESLIGADO") + (RunnerTouch.UseTouchUI ? "" : "  [V]"),
                 ps1On ? new Color(0.2f, 0.5f, 0.3f, 0.9f) : new Color(0.35f, 0.2f, 0.2f, 0.9f), s, TogglePS1);
@@ -4263,7 +4468,8 @@ public partial class RunnerGame : MonoBehaviour
         // barras de vida dos inimigos
         foreach (var o in obstacles)
         {
-            if (o == null || o.dead || !o.Shootable || o.maxHp <= 1.01f || o.hp >= o.maxHp) continue;
+            if (o == null || o.dead || !o.Shootable || o.champion || o.maxHp <= 1.01f || o.hp >= o.maxHp) continue;
+            if (TextMode < 2 && !o.elite && o.type != ObType.Tank && o.type != ObType.Turret && o.type != ObType.BossDrone && o.maxHp < stats.Damage * 4f) continue;
             Vector3 sp = WorldToScreen(o.transform.position + Vector3.up * (o.half.y + 0.35f));
             if (sp.z <= 0f) continue;
             float w = 70 * s, h = 8 * s;
@@ -4272,13 +4478,15 @@ public partial class RunnerGame : MonoBehaviour
             Box(new Rect(r.x, r.y, r.width * Mathf.Clamp01(o.hp / o.maxHp), r.height), new Color(1f, 0.25f, 0.25f));
         }
 
+        DrawChampionLabel(s, H);
+
         // rótulo das caixas de avião
         foreach (var o in obstacles)
         {
             if (o == null || o.dead || (o.type != ObType.PlaneBox && o.type != ObType.CarBox && o.type != ObType.ShipBox && o.type != ObType.AngelBox && o.type != ObType.BabelBox && o.type != ObType.JerichoBox && o.type != ObType.GoliathBox)) continue;
             Vector3 sp = WorldToScreen(o.transform.position + Vector3.up * 1.4f);
-            if (sp.z <= 0f || sp.z > 90f) continue;
-            floatStyle.fontSize = Mathf.RoundToInt(28 * s);
+            if (sp.z <= 0f || sp.z > 70f) continue;
+            floatStyle.fontSize = Mathf.RoundToInt(24 * s);
             bool isCar = o.type == ObType.CarBox;
             bool isShip = o.type == ObType.ShipBox;
             bool isAngel = o.type == ObType.AngelBox;
@@ -4294,7 +4502,7 @@ public partial class RunnerGame : MonoBehaviour
         {
             Vector3 sp = WorldToScreen(f.pos);
             if (sp.z <= 0f) continue;
-            floatStyle.fontSize = Mathf.RoundToInt((f.big ? 38 : 26) * s);
+            floatStyle.fontSize = Mathf.RoundToInt((f.big ? 36 : 22) * s);
             var c = f.color;
             c.a = Mathf.Clamp01(f.t / 0.3f);
             ShadowLabel(new Rect(sp.x - 150 * s, H - sp.y - 25 * s, 300 * s, 50 * s), f.text, floatStyle, c);
@@ -4304,10 +4512,10 @@ public partial class RunnerGame : MonoBehaviour
     void DrawHUD(float s, float W, float H)
     {
         // pontuação em destaque (∞ depois de vencer Satanás); o recorde só aparece quando é batido
-        var scoreSt = new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(52 * s), alignment = TextAnchor.UpperLeft };
+        var scoreSt = Sty(bigStyle, fs: Mathf.RoundToInt(52 * s), al: TextAnchor.UpperLeft);
         ShadowLabel(new Rect(24 * s, 8 * s, 700 * s, 66 * s), (finalBeaten ? "∞  " : "") + Score, scoreSt, Color.white);
         if (highScore > 0 && Score > highScore)
-            ShadowLabel(new Rect(26 * s, 64 * s, 500 * s, 30 * s), "NOVO RECORDE!", new GUIStyle(cardSmall) { alignment = TextAnchor.UpperLeft }, new Color(1f, 0.85f, 0.3f));
+            ShadowLabel(new Rect(26 * s, 64 * s, 500 * s, 30 * s), "NOVO RECORDE!", Sty(cardSmall, al: TextAnchor.UpperLeft), new Color(1f, 0.85f, 0.3f));
         DrawRogueHUD(s, W, H);
 
         // vidas
@@ -4356,13 +4564,13 @@ public partial class RunnerGame : MonoBehaviour
         else if (bossPending)
         {
             if (Mathf.Repeat(Time.unscaledTime, 0.5f) < 0.33f)
-                ShadowLabel(new Rect(0, H * 0.16f, W, 90 * s), (bossesDefeated + 1 == finalBossNumber ? "!! O ACUSADOR SE APROXIMA !!" : "!! CHEFE SE APROXIMANDO !!"), new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(62 * s) }, new Color(1f, 0.25f, 0.2f));
+                ShadowLabel(new Rect(0, H * 0.16f, W, 90 * s), (bossesDefeated + 1 == finalBossNumber ? "!! O ACUSADOR SE APROXIMA !!" : "!! CHEFE SE APROXIMANDO !!"), Sty(bigStyle, fs: Mathf.RoundToInt(62 * s)), new Color(1f, 0.25f, 0.2f));
             Box(new Rect(0, 0, W, H), new Color(1f, 0f, 0f, 0.06f + 0.06f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 6f))));
         }
         else if (flightPending)
         {
             if (Mathf.Repeat(Time.unscaledTime, 0.5f) < 0.33f)
-                ShadowLabel(new Rect(0, H * 0.16f, W, 90 * s), "PREPARAR PARA DECOLAR!", new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(62 * s) }, new Color(0.5f, 0.9f, 1f));
+                ShadowLabel(new Rect(0, H * 0.16f, W, 90 * s), "PREPARAR PARA DECOLAR!", Sty(bigStyle, fs: Mathf.RoundToInt(62 * s)), new Color(0.5f, 0.9f, 1f));
         }
         else if (passover)
         {
@@ -4371,8 +4579,8 @@ public partial class RunnerGame : MonoBehaviour
             Box(new Rect(bar.x - 2, bar.y - 2, bar.width + 4, bar.height + 4), new Color(0, 0, 0, 0.55f));
             Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(passoverTime / passoverDuration), bar.height), new Color(0.75f, 0.1f, 0.1f));
             string ptxt = "NOITE DA PÁSCOA  —  julgadas " + judged + "  •  poupadas " + spared + (passCombo > 1 ? "  •  combo x" + passCombo : "");
-            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), ptxt, new GUIStyle(cardSmall), Color.white);
-            ShadowLabel(new Rect(0, bar.y + bh + 34 * s, W, 40 * s), "Passe pelas casas SEM sangue  •  evite as portas marcadas de vermelho", new GUIStyle(cardSmall), new Color(1f, 0.6f, 0.55f));
+            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), ptxt, Sty(cardSmall), Color.white);
+            ShadowLabel(new Rect(0, bar.y + bh + 34 * s, W, 40 * s), "Passe pelas casas SEM sangue  •  evite as portas marcadas de vermelho", Sty(cardSmall), new Color(1f, 0.6f, 0.55f));
         }
         else if (racing)
         {
@@ -4391,7 +4599,7 @@ public partial class RunnerGame : MonoBehaviour
             string raceHint = RunnerTouch.UseTouchUI
                 ? "Arraste o dedo: ←/→ vira   •   ↑ acelera   •   ↓ freia   •   nas curvas, vire para dentro"
                 : "A/D: esquerda/direita   •   W: acelerar   •   S: frear   •   nas curvas, vire para dentro";
-            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), raceHint, new GUIStyle(cardSmall), Color.white);
+            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), raceHint, Sty(cardSmall), Color.white);
 
             // aviso de curva à frente
             float ahead = player.transform.position.z + 45f;
@@ -4405,9 +4613,13 @@ public partial class RunnerGame : MonoBehaviour
             }
 
             Color pc = racePosition == 1 ? new Color(1f, 0.85f, 0.2f) : (racePosition <= 3 ? Color.white : new Color(1f, 0.5f, 0.4f));
-            ShadowLabel(new Rect(0, H * 0.72f, W, 110 * s), racePosition + "º / " + (rivalCount + 1), new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(84 * s) }, pc);
+            ShadowLabel(new Rect(0, H * 0.72f, W, 110 * s), racePosition + "º / " + (rivalCount + 1), Sty(bigStyle, fs: Mathf.RoundToInt(84 * s)), pc);
             if (player.offRoad && Mathf.Repeat(Time.unscaledTime, 0.4f) < 0.25f)
                 ShadowLabel(new Rect(0, H * 0.62f, W, 60 * s), "FORA DA PISTA!", midStyle, new Color(1f, 0.4f, 0.3f));
+        }
+        else if (player.flying && skyTransit)
+        {
+            DrawSkyHUD(s, W);
         }
         else if (player.flying)
         {
@@ -4418,7 +4630,7 @@ public partial class RunnerGame : MonoBehaviour
             string ft = flightTime > 4f
                 ? "CARRO DE FOGO  —  " + Mathf.CeilToInt(flightTime) + "s   (" + (RunnerTouch.UseTouchUI ? "arraste o dedo para voar" : "WASD / setas / analógico para voar") + ")"
                 : "POUSANDO EM " + Mathf.CeilToInt(Mathf.Max(0f, flightTime)) + "...";
-            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), ft, new GUIStyle(cardSmall), flightTime > 4f ? Color.white : new Color(1f, 0.85f, 0.3f));
+            ShadowLabel(new Rect(0, bar.y + bh + 2 * s, W, 40 * s), ft, Sty(cardSmall), flightTime > 4f ? Color.white : new Color(1f, 0.85f, 0.3f));
         }
         else
         {
@@ -4429,7 +4641,7 @@ public partial class RunnerGame : MonoBehaviour
             Box(new Rect(bar.x - 2, bar.y - 2, bar.width + 4, bar.height + 4), new Color(0, 0, 0, 0.55f));
             Box(new Rect(bar.x, bar.y, bar.width * prog, bar.height), new Color(0.5f, 0.85f, 1f));
             // nível à esquerda da barra; à direita, um marcador por nível até o chefe
-            var lvSt = new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleRight };
+            var lvSt = Sty(cardSmall, al: TextAnchor.MiddleRight);
             ShadowLabel(new Rect(bar.x - 130 * s, bar.y - 8 * s, 120 * s, 32 * s), "NÍVEL " + level, lvSt, Color.white);
             int toBoss = bossEveryLevels > 0 ? bossEveryLevels - (level % bossEveryLevels) : 0;
             if (boss == null && !bossPending)
@@ -4446,7 +4658,7 @@ public partial class RunnerGame : MonoBehaviour
             float a = Mathf.Clamp01(bannerTime / 0.8f) * Mathf.Clamp01((4f - bannerTime) / 0.4f);
             Color bc = T.id == 2 ? new Color(1f, 0.35f, 0.1f, a) : (T.id == 1 ? new Color(0.9f, 0.15f, 0.15f, a) : (T.id == 3 ? new Color(0.3f, 0.85f, 0.85f, a) : new Color(1f, 0.85f, 0.3f, a)));
             Box(new Rect(0, H * 0.3f, W, 170 * s), new Color(0f, 0f, 0f, 0.45f * a));
-            ShadowLabel(new Rect(0, H * 0.3f + 10 * s, W, 110 * s), bannerText, new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(100 * s) }, bc);
+            ShadowLabel(new Rect(0, H * 0.3f + 10 * s, W, 110 * s), bannerText, Sty(bigStyle, fs: Mathf.RoundToInt(100 * s)), bc);
             ShadowLabel(new Rect(0, H * 0.3f + 110 * s, W, 50 * s), bannerSub, midStyle, new Color(1f, 1f, 1f, a));
         }
 
@@ -4471,7 +4683,7 @@ public partial class RunnerGame : MonoBehaviour
         var r = new Rect(right - w, y, w, h);
         Box(r, new Color(0f, 0f, 0f, 0.5f));
         Box(new Rect(r.x, r.y, r.width * Mathf.Clamp01(fill), r.height), ready ? new Color(c.r, c.g, c.b, 0.75f) : new Color(c.r, c.g, c.b, 0.3f));
-        ShadowLabel(r, label, new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(18 * s) }, ready ? Color.white : new Color(1f, 1f, 1f, 0.6f));
+        ShadowLabel(r, label, Sty(cardSmall, al: TextAnchor.MiddleCenter, fs: Mathf.RoundToInt(18 * s)), ready ? Color.white : new Color(1f, 1f, 1f, 0.6f));
         return r.x - 10 * s;
     }
 
@@ -4479,14 +4691,14 @@ public partial class RunnerGame : MonoBehaviour
     {
         float bw = 760 * s, bh = 26 * s;
         var bar = new Rect(W / 2 - bw / 2, 52 * s, bw, bh);
-        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), "ESPÍRITO MALIGNO  —  FASE " + hell.Phase, new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(32 * s) }, new Color(0.85f, 0.4f, 1f));
+        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), "ESPÍRITO MALIGNO  —  FASE " + hell.Phase, Sty(midStyle, fs: Mathf.RoundToInt(32 * s)), new Color(0.85f, 0.4f, 1f));
         Box(new Rect(bar.x - 3, bar.y - 3, bar.width + 6, bar.height + 6), new Color(0, 0, 0, 0.7f));
         Box(bar, new Color(0.15f, 0.03f, 0.18f));
         Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(hell.SpiritHp / hell.SpiritMaxHp), bar.height), new Color(0.7f, 0.2f, 0.95f));
         for (int k = 1; k <= 2; k++) Box(new Rect(bar.x + bar.width * k / 3f - 1, bar.y, 2, bar.height), new Color(1f, 1f, 1f, 0.5f));
-        ShadowLabel(bar, Mathf.CeilToInt(Mathf.Max(0f, hell.SpiritHp)) + " / " + Mathf.CeilToInt(hell.SpiritMaxHp), new GUIStyle(cardSmall), Color.white);
+        ShadowLabel(bar, Mathf.CeilToInt(Mathf.Max(0f, hell.SpiritHp)) + " / " + Mathf.CeilToInt(hell.SpiritMaxHp), Sty(cardSmall), Color.white);
         string hint = RunnerTouch.UseTouchUI ? "Arraste o dedo para mover a nave • tiro automático" : "WASD / setas: mover   •   Shift: modo preciso   •   tiro automático";
-        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), "Tempo: " + Mathf.CeilToInt(Mathf.Max(0f, hell.TimeLeft)) + "s   •   " + hint, new GUIStyle(cardSmall), hell.TimeLeft < 10f ? new Color(1f, 0.5f, 0.4f) : Color.white);
+        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), "Tempo: " + Mathf.CeilToInt(Mathf.Max(0f, hell.TimeLeft)) + "s   •   " + hint, Sty(cardSmall), hell.TimeLeft < 10f ? new Color(1f, 0.5f, 0.4f) : Color.white);
     }
 
     void DrawBabelBar(float s, float W, float H)
@@ -4498,16 +4710,16 @@ public partial class RunnerGame : MonoBehaviour
 
         float bw = 760 * s, bh = 22 * s;
         var bar = new Rect(W / 2 - bw / 2, 52 * s, bw, bh);
-        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), T("TORRE DE BABEL  —  " + RunnerBabel.StyleNames[bg.Style]), new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(32 * s) }, new Color(1f, 0.8f, 0.45f));
+        ShadowLabel(new Rect(0, 8 * s, W, 44 * s), T("TORRE DE BABEL  —  " + RunnerBabel.StyleNames[bg.Style]), Sty(midStyle, fs: Mathf.RoundToInt(32 * s)), new Color(1f, 0.8f, 0.45f));
         Box(new Rect(bar.x - 3, bar.y - 3, bar.width + 6, bar.height + 6), new Color(0, 0, 0, 0.7f));
         Box(bar, new Color(0.25f, 0.18f, 0.1f));
         Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(bg.Height / bg.Goal), bar.height), new Color(0.85f, 0.65f, 0.35f));
-        ShadowLabel(bar, Mathf.RoundToInt(Mathf.Max(0f, bg.Height)) + " / " + Mathf.RoundToInt(bg.Goal) + " côvados", new GUIStyle(cardSmall), Color.white);
+        ShadowLabel(bar, Mathf.RoundToInt(Mathf.Max(0f, bg.Height)) + " / " + Mathf.RoundToInt(bg.Goal) + " côvados", Sty(cardSmall), Color.white);
         string hint = RunnerTouch.UseTouchUI ? "Segure e arraste para os lados" : "A/D ou setas: mover";
         hint += "   •   pise nos construtores   •   tiro automático";
-        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), T("Tempo: " + Mathf.CeilToInt(Mathf.Max(0f, bg.TimeLeft)) + "s   •   " + hint), new GUIStyle(cardSmall), bg.TimeLeft < 10f ? new Color(1f, 0.5f, 0.4f) : Color.white);
+        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), T("Tempo: " + Mathf.CeilToInt(Mathf.Max(0f, bg.TimeLeft)) + "s   •   " + hint), Sty(cardSmall), bg.TimeLeft < 10f ? new Color(1f, 0.5f, 0.4f) : Color.white);
 
-        var big = new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(52 * s) };
+        var big = Sty(bigStyle, fs: Mathf.RoundToInt(52 * s));
         if (bg.Style == 1 && Mathf.Abs(bg.Wind) > 1f)
         {
             string arrows = bg.Wind > 0f ? "VENTO  >>>" : "<<<  VENTO";
@@ -4535,18 +4747,18 @@ public partial class RunnerGame : MonoBehaviour
             ? "SATANÁS  " + RunnerBoss.Rtl(RunnerBoss.HebrewName) + "  —  CHEFE FINAL" + (b.trueForm ? "  (FORMA VERDADEIRA)" : (b.enraged ? "  (FÚRIA)" : ""))
             : b.bossName.ToUpper() + "  —  CHEFE " + (bossesDefeated + 1) + (b.enraged ? "  (FÚRIA)" : "");
         ShadowLabel(new Rect(0, 8 * s, W, 44 * s), bossTitle,
-            new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(32 * s) }, b.enraged ? new Color(1f, 0.3f, 0.25f) : new Color(1f, 0.85f, 0.3f));
+            Sty(midStyle, fs: Mathf.RoundToInt(32 * s)), b.enraged ? new Color(1f, 0.3f, 0.25f) : new Color(1f, 0.85f, 0.3f));
         Box(new Rect(bar.x - 3, bar.y - 3, bar.width + 6, bar.height + 6), new Color(0, 0, 0, 0.7f));
         Box(bar, new Color(0.25f, 0.05f, 0.05f));
         Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(o.hp / o.maxHp), bar.height), b.enraged ? new Color(1f, 0.15f, 0.1f) : new Color(0.85f, 0.15f, 0.2f));
         Box(new Rect(bar.x + bar.width * 0.5f - 1, bar.y, 2, bar.height), new Color(1f, 1f, 1f, 0.5f));
         if (b.shieldMax > 0f && b.shield > 0f)
             Box(new Rect(bar.x, bar.y + bar.height - 7 * s, bar.width * Mathf.Clamp01(b.shield / o.maxHp) , 7 * s), new Color(0.4f, 0.9f, 1f));
-        ShadowLabel(bar, Mathf.CeilToInt(o.hp) + " / " + Mathf.CeilToInt(o.maxHp), new GUIStyle(cardSmall), Color.white);
+        ShadowLabel(bar, Mathf.CeilToInt(o.hp) + " / " + Mathf.CeilToInt(o.maxHp), Sty(cardSmall), Color.white);
 
         var names = new List<string>();
         foreach (var a in b.abilities) names.Add(RunnerBoss.AbilityName(a));
-        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), string.Join("  •  ", names), new GUIStyle(cardSmall), new Color(1f, 0.75f, 0.7f));
+        ShadowLabel(new Rect(0, bar.yMax + 6 * s, W, 34 * s), string.Join("  •  ", names), Sty(cardSmall), new Color(1f, 0.75f, 0.7f));
     }
 
     /// Lista as evoluções que estão perto de acontecer (pelo menos 1 requisito cumprido).
@@ -4574,9 +4786,9 @@ public partial class RunnerGame : MonoBehaviour
     {
         Box(new Rect(x, y, w, h), new Color(0f, 0f, 0f, 0.5f));
         float pad = 14 * s, cy = y + pad;
-        var head = new GUIStyle(midStyle) { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(30 * s) };
+        var head = Sty(midStyle, al: TextAnchor.MiddleLeft, fs: Mathf.RoundToInt(30 * s));
         ShadowLabel(new Rect(x + pad, cy, w - pad * 2, 40 * s), stats.weapon.name.ToUpper(), head, stats.weapon.color);
-        ShadowLabel(new Rect(x + pad, cy, w - pad * 2, 40 * s), "SUA BUILD", new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleRight }, new Color(1f, 0.85f, 0.3f));
+        ShadowLabel(new Rect(x + pad, cy, w - pad * 2, 40 * s), "SUA BUILD", Sty(cardSmall, al: TextAnchor.MiddleRight), new Color(1f, 0.85f, 0.3f));
         cy += 46 * s;
 
         // ---- atributos em "fichas"
@@ -4591,10 +4803,27 @@ public partial class RunnerGame : MonoBehaviour
         {
             var r = new Rect(x + pad + i * (cw + 8 * s), cy, cw, 58 * s);
             Box(r, new Color(1f, 1f, 1f, 0.08f));
-            ShadowLabel(new Rect(r.x, r.y + 2 * s, r.width, 20 * s), lbl[i], new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(15 * s) }, new Color(0.75f, 0.8f, 0.9f));
-            ShadowLabel(new Rect(r.x, r.y + 22 * s, r.width, 34 * s), val[i], new GUIStyle(cardTitle) { fontSize = Mathf.RoundToInt(26 * s) }, Color.white);
+            ShadowLabel(new Rect(r.x, r.y + 2 * s, r.width, 20 * s), lbl[i], Sty(cardSmall, fs: Mathf.RoundToInt(15 * s)), new Color(0.75f, 0.8f, 0.9f));
+            ShadowLabel(new Rect(r.x, r.y + 22 * s, r.width, 34 * s), val[i], Sty(cardTitle, fs: Mathf.RoundToInt(26 * s)), Color.white);
         }
         cy += 70 * s;
+
+        // ---- famílias (3 e 5 cartas diferentes ligam bônus)
+        {
+            float fw = (w - pad * 2 - 4 * 6 * s) / 5f;
+            for (int i = 0; i < Families.All.Length; i++)
+            {
+                var f = Families.All[i];
+                int n = FamilyCount(f);
+                Color fc = Families.Tint(f);
+                var r = new Rect(x + pad + i * (fw + 6 * s), cy, fw, 26 * s);
+                Box(r, new Color(fc.r * 0.22f, fc.g * 0.22f, fc.b * 0.22f, 0.9f));
+                Box(new Rect(r.x, r.yMax - 4 * s, r.width * Mathf.Clamp01(n / 5f), 4 * s), fc);
+                string stars = Fam(f, 5) ? " ★★" : (Fam(f, 3) ? " ★" : "");
+                ShadowLabel(r, Families.Name(f) + " " + n + stars, Sty(cardSmall, fs: Mathf.RoundToInt(14 * s)), n >= 3 ? Color.Lerp(fc, Color.white, 0.4f) : fc);
+            }
+            cy += 34 * s;
+        }
 
         // ---- cartas como blocos coloridos pela raridade
         var order = new List<RunnerCard>();
@@ -4610,15 +4839,15 @@ public partial class RunnerGame : MonoBehaviour
         foreach (var evo in Evolutions.All) { int tot; if (CardStacks(evo.id) == 0 && evo.Progress(this, out tot) > 0) evoLines++; }
         float reserve = Mathf.Min(evoLines, 3) * 26 * s + (relicList.Count > 0 ? 40 * s : 0f);
         int maxRows = Mathf.Max(1, Mathf.FloorToInt((y + h - pad - cy - reserve) / (th + 6 * s)));
-        var tile = new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(16 * s), alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
+        var tile = Sty(cardSmall, fs: Mathf.RoundToInt(16 * s), al: TextAnchor.MiddleLeft, cl: TextClipping.Clip);
         if (order.Count == 0)
-            ShadowLabel(new Rect(x, cy, w, th), "nenhuma carta ainda", new GUIStyle(cardSmall), new Color(1f, 1f, 1f, 0.5f));
+            ShadowLabel(new Rect(x, cy, w, th), "nenhuma carta ainda", Sty(cardSmall), new Color(1f, 1f, 1f, 0.5f));
         for (int i = 0; i < order.Count; i++)
         {
             int row = i / cols, col = i % cols;
             if (row >= maxRows)
             {
-                ShadowLabel(new Rect(x, cy + maxRows * (th + 6 * s) - 4 * s, w - pad, 20 * s), "+" + (order.Count - i) + " cartas", new GUIStyle(cardSmall) { alignment = TextAnchor.MiddleRight, fontSize = Mathf.RoundToInt(15 * s) }, new Color(1f, 1f, 1f, 0.6f));
+                ShadowLabel(new Rect(x, cy + maxRows * (th + 6 * s) - 4 * s, w - pad, 20 * s), "+" + (order.Count - i) + " cartas", Sty(cardSmall, al: TextAnchor.MiddleRight, fs: Mathf.RoundToInt(15 * s)), new Color(1f, 1f, 1f, 0.6f));
                 break;
             }
             var c = order[i];
@@ -4626,8 +4855,10 @@ public partial class RunnerGame : MonoBehaviour
             Color rc = c.isEvolution ? CardDB.EvolutionColor : CardDB.RarityColor(c.rarity);
             Box(r, new Color(rc.r * 0.25f, rc.g * 0.25f, rc.b * 0.25f, 0.9f));
             Box(new Rect(r.x, r.y, 5 * s, r.height), rc);
-            string n = c.name + (counts[c.id] > 1 ? "  x" + counts[c.id] : "");
-            ShadowLabel(new Rect(r.x + 10 * s, r.y, r.width - 12 * s, r.height), n, tile, Color.white);
+            float ic = r.height - 4 * s;
+            CardIcons.Draw(new Rect(r.x + 8 * s, r.y + 2 * s, ic, ic), c);
+            string n = c.name + (IsAnointed(c) ? "+" : "") + (counts[c.id] > 1 ? "  x" + counts[c.id] : "");
+            ShadowLabel(new Rect(r.x + 12 * s + ic, r.y, r.width - 14 * s - ic, r.height), n, tile, Color.white);
         }
         cy += Mathf.Max(1, Mathf.Min(maxRows, (order.Count + cols - 1) / cols)) * (th + 6 * s) + 8 * s;
 
@@ -4658,7 +4889,7 @@ public partial class RunnerGame : MonoBehaviour
             var r = new Rect(x + pad, cy, w - pad * 2, 22 * s);
             Box(r, new Color(1f, 1f, 1f, 0.06f));
             Box(new Rect(r.x, r.y, r.width * ok / Mathf.Max(1, total), r.height), new Color(CardDB.EvolutionColor.r, CardDB.EvolutionColor.g, CardDB.EvolutionColor.b, 0.45f));
-            ShadowLabel(r, "★ " + evo.name + (ok == total ? "  —  PRONTA!" : "  (" + ok + "/" + total + ")"), new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(16 * s) }, Color.white);
+            ShadowLabel(r, "★ " + evo.name + (ok == total ? "  —  PRONTA!" : "  (" + ok + "/" + total + ")"), Sty(cardSmall, fs: Mathf.RoundToInt(16 * s)), Color.white);
             cy += 26 * s;
             shown++;
         }
@@ -4668,12 +4899,15 @@ public partial class RunnerGame : MonoBehaviour
     {
         Box(new Rect(0, 0, W, H), new Color(0.02f, 0.02f, 0.06f, 0.7f));
         string head = offerIsBoss ? offerTitle : "SUBIU PARA O NÍVEL " + (level + 1) + "!";
-        string sub = offerIsBoss ? offerSub : "Escolha uma carta";
-        ShadowLabel(new Rect(0, H * 0.08f, W, 80 * s), head, new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(64 * s) }, offerIsBoss ? new Color(1f, 0.6f, 0.15f) : new Color(1f, 0.85f, 0.2f));
+        string sub = offerIsBoss ? offerSub : (PlentyText() != "" ? "Escolha uma carta  —  " + PlentyText() : "Escolha uma carta");
+        ShadowLabel(new Rect(0, H * 0.08f, W, 80 * s), head, Sty(bigStyle, fs: Mathf.RoundToInt(64 * s)), offerIsBoss ? new Color(1f, 0.6f, 0.15f) : new Color(1f, 0.85f, 0.2f));
         ShadowLabel(new Rect(0, H * 0.08f + 75 * s, W, 50 * s), sub, midStyle, Color.white);
+        if (!offerIsBoss)
+            ShadowLabel(new Rect(0, H * 0.08f + 120 * s, W, 34 * s), "baralho " + drawPile.Count + "   •   descarte " + discardPile.Count + JosephPreview(),
+                Sty(cardSmall, fs: Mathf.RoundToInt(20 * s)), new Color(0.75f, 0.7f, 0.95f));
 
         int n = offer.Count;
-        float cw = 330 * s, ch = 460 * s, gap = 34 * s;
+        float cw = 330 * s, ch = 540 * s, gap = 34 * s;
         float totalW = n * cw + (n - 1) * gap;
         if (totalW > W - 40 * s)
         {
@@ -4711,7 +4945,7 @@ public partial class RunnerGame : MonoBehaviour
 
             bool sel = i == selected;
             if (sel) rect.y -= 16 * cs;
-            Color rc = card.isEvolution ? CardDB.EvolutionColor : CardDB.RarityColor(card.rarity);
+            Color rc = card.plague ? new Color(0.85f, 0.25f, 0.22f) : (card.isEvolution ? CardDB.EvolutionColor : CardDB.RarityColor(card.rarity));
 
             // entrada: as cartas sobem uma depois da outra, com um leve "quique"
             float deal = Mathf.Clamp01((Time.unscaledTime - levelUpOpenTime - i * 0.08f) / 0.38f);
@@ -4746,7 +4980,13 @@ public partial class RunnerGame : MonoBehaviour
             // faixa da raridade
             var band = new Rect(inner.x, inner.y, inner.width, 44 * cs);
             Box(band, new Color(rc.r * 0.45f, rc.g * 0.45f, rc.b * 0.45f));
-            string tag = card.isEvolution ? "★ EVOLUÇÃO ★" : CardDB.RarityName(card.rarity) + (card.isWeapon ? " • ARMA" : "") + (card.curse ? " • MALDIÇÃO" : "");
+            bool isNew = Deck.IsCollectible(card) && !Deck.Owned(card.id);
+            string tag = card.plague ? "PRAGA" : card.isEvolution ? "★ EVOLUÇÃO ★" : (isNew ? "NOVA! • " : "") + CardDB.RarityName(card.rarity) + (card.isWeapon ? " • ARMA" : "") + (card.curse ? " • MALDIÇÃO" : "");
+            if (isNew)
+            {
+                float np = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f);
+                Box(new Rect(band.x, band.y, band.width, band.height), new Color(1f, 0.9f, 0.3f, 0.25f + 0.3f * np));
+            }
             ShadowLabel(band, tag, cardSmall, card.curse ? new Color(1f, 0.5f, 0.5f) : Color.white);
             if (card.isEvolution || card.rarity == Rarity.Lendario)
             {
@@ -4756,15 +4996,34 @@ public partial class RunnerGame : MonoBehaviour
                     Box(new Rect(inner.x + inner.width * sweep - 10 * cs, inner.y, 20 * cs, inner.height), new Color(1f, 1f, 1f, 0.12f));
             }
 
-            ShadowLabel(new Rect(inner.x + 10 * cs, inner.y + 56 * cs, inner.width - 20 * cs, 100 * cs), card.name, cardTitle, rc);
-            Box(new Rect(inner.x + 30 * cs, inner.y + 160 * cs, inner.width - 60 * cs, 2 * cs), new Color(rc.r, rc.g, rc.b, 0.5f));
-            ShadowLabel(new Rect(inner.x + 18 * cs, inner.y + 178 * cs, inner.width - 36 * cs, 200 * cs), card.desc, cardDesc, new Color(0.92f, 0.92f, 0.95f));
+            // ícone (Assets/Resources/CardIcons/<id>.png)
+            float isz = 88 * cs;
+            CardIcons.Draw(new Rect(inner.center.x - isz / 2, inner.y + 52 * cs, isz, isz), card);
+            ShadowLabel(new Rect(inner.x + 10 * cs, inner.y + 146 * cs, inner.width - 20 * cs, 74 * cs), card.name + (IsAnointed(card) ? "+" : ""), cardTitle, rc);
+            Box(new Rect(inner.x + 30 * cs, inner.y + 224 * cs, inner.width - 60 * cs, 2 * cs), new Color(rc.r, rc.g, rc.b, 0.5f));
+            ShadowLabel(new Rect(inner.x + 18 * cs, inner.y + 234 * cs, inner.width - 36 * cs, inner.height - 234 * cs - 122 * cs), card.desc, cardDesc, new Color(0.92f, 0.92f, 0.95f));
             if (card.isEvolution)
-                ShadowLabel(new Rect(inner.x + 10 * cs, inner.yMax - 118 * cs, inner.width - 20 * cs, 36 * cs), card.reqText, new GUIStyle(cardSmall) { wordWrap = true }, new Color(1f, 0.85f, 0.4f));
+                ShadowLabel(new Rect(inner.x + 10 * cs, inner.yMax - 118 * cs, inner.width - 20 * cs, 36 * cs), card.reqText, Sty(cardSmall, ww: 1), new Color(1f, 0.85f, 0.4f));
 
             int have = Stacks(card);
             string stackTxt = card.maxStacks >= 99 ? (have > 0 ? "já pego " + have + "x" : "") :
                               (card.maxStacks > 1 ? "nível " + have + " → " + (have + 1) + "  (máx " + card.maxStacks + ")" : "única");
+            if (offerIsBoss && Deck.IsCollectible(card)) stackTxt = isNew ? "fica na sua coleção" : "+1 no baralho";
+            if (CardTimes(card) > 1) stackTxt = (IsAnointed(card) ? "UNGIDA" : "GIDEÃO") + ": vale " + CardTimes(card) + "x";
+            if (card.plague) stackTxt = "queime no altar";
+            // família: progresso para o bônus
+            var fam = Families.Of(card);
+            if (fam != Family.Nenhuma)
+            {
+                int fn = FamilyCount(fam), after = fn + (have == 0 ? 1 : 0);
+                Color fc = Families.Tint(fam);
+                var fr = new Rect(inner.x + 14 * cs, inner.yMax - 116 * cs, inner.width - 28 * cs, 30 * cs);
+                Box(fr, new Color(fc.r * 0.3f, fc.g * 0.3f, fc.b * 0.3f, 0.9f));
+                Box(new Rect(fr.x, fr.y, 6 * cs, fr.height), fc);
+                bool bonus = after != fn && (after == 3 || after == 5);
+                string ft = Families.Name(fam) + "  " + (after != fn ? fn + " → " + after : fn.ToString()) + (bonus ? "   BÔNUS!" : (after < 3 ? "/3" : (after < 5 ? "/5" : "")));
+                ShadowLabel(fr, ft, Sty(cardSmall, fs: Mathf.RoundToInt(18 * cs)), bonus ? Color.Lerp(fc, Color.white, 0.5f) : fc);
+            }
             ShadowLabel(new Rect(inner.x, inner.yMax - 80 * cs, inner.width, 34 * cs), stackTxt, cardSmall, new Color(0.7f, 0.75f, 0.85f));
             ShadowLabel(new Rect(inner.x, inner.yMax - 44 * cs, inner.width, 34 * cs), "[" + (i + 1) + "]", cardSmall, sel ? Color.white : new Color(0.6f, 0.6f, 0.7f));
         }

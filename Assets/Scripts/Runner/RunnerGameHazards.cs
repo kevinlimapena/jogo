@@ -14,7 +14,7 @@ public partial class RunnerGame
     readonly HashSet<ObType> hintsShown = new HashSet<ObType>();
 
     /// Chance de uma fileira ser de obstáculos novos (cresce com a dificuldade).
-    float HazardChance => Mathf.Min(0.6f, 0.22f + 0.28f * Difficulty + LevelThreat * 0.06f);
+    float HazardChance => Mathf.Min(0.7f, 0.22f + 0.28f * Difficulty + LevelThreat * 0.06f + SectionHazardBonus);
 
     // ================================================================== fileiras
 
@@ -121,6 +121,7 @@ public partial class RunnerGame
             case ObType.FireJet: t = "FORNALHA"; sub = "Passe quando o fogo baixar (Dn 3:21)"; break;
             case ObType.Spikes: t = "ESPINHOS"; sub = "Pule ou passe quando estiverem abaixados"; break;
             case ObType.Slinger: t = "FUNDIBULÁRIO"; sub = "Fuja da sombra vermelha: é onde a pedra vai cair (Jz 20:16)"; break;
+            case ObType.Platform: t = "CARAVANA"; sub = "Suba pela rampa e corra lá em cima: pegue os siclos, longe dos inimigos do chão"; break;
         }
         if (t == null || bannerTime > 0.5f) return;
         bannerText = t;
@@ -130,9 +131,9 @@ public partial class RunnerGame
 
     void UpdateHazards()
     {
-        if (player.feetY <= 0.001f) stompChain = 0;
+        if (player.feetY <= player.groundY + 0.001f) stompChain = 0;
         foreach (var o in obstacles)
-            if (o != null && !o.dead && (o.stompable || o.Indestructible || o.type == ObType.Slinger)) HazardIntro(o);
+            if (o != null && !o.dead && (o.stompable || o.Indestructible || o.type == ObType.Slinger || o.type == ObType.Platform)) HazardIntro(o);
     }
 
     // ================================================================== criação
@@ -325,9 +326,9 @@ public partial class RunnerGame
         Prim(PrimitiveType.Sphere, o.transform, Vector3.zero, Vector3.one * 0.7f, new Color(0.62f, 0.6f, 0.55f));
         o.velocity = v;
         o.airborne = true;
-        var m = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        Destroy(m.GetComponent<Collider>());
-        m.GetComponent<Renderer>().sharedMaterial = Glow(new Color(1f, 0.15f, 0.1f));
+        MeshRenderer mR;
+        var m = RunnerGame.NewPrim(PrimitiveType.Cylinder, out mR, false);
+        mR.sharedMaterial = Glow(new Color(1f, 0.15f, 0.1f));
         m.transform.position = new Vector3(land.x, 0.04f, land.z);
         m.transform.localScale = new Vector3(1.8f, 0.02f, 1.8f);
         o.marker = m;

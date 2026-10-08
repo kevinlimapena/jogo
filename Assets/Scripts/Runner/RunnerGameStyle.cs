@@ -39,10 +39,16 @@ public partial class RunnerGame
     }
 
     /// Nos menus, mantém o cavalo igual à escolha atual.
+    string menuWeaponFor = "", menuWeaponId = "";
+
     void SyncHorse()
     {
-        if (state != RunnerState.Menu && state != RunnerState.Temple && state != RunnerState.Stable) return;
+        if (state != RunnerState.Menu && state != RunnerState.Temple && state != RunnerState.Stable && state != RunnerState.Deck && state != RunnerState.Codex) return;
         if (CurrentHorseKey() != horseKey) RebuildHorse();
+        // fora da jornada, o cavalo mostra a arma do profeta escolhido
+        var p = Meta.Selected;
+        if (menuWeaponFor != p.id) { menuWeaponFor = p.id; menuWeaponId = p.weapon().id; }
+        if (stats.weapon == null || stats.weapon.id != menuWeaponId) stats.weapon = p.weapon();
     }
 
     // ================================================================== estábulo
@@ -86,8 +92,8 @@ public partial class RunnerGame
         var p = Meta.Selected;
         var coats = Horse.Coats(p.id);
         var coat = coats[Horse.CoatIndex(p.id)];
-        ShadowLabel(new Rect(0, 24 * s, W, 70 * s), "ESTÁBULO", new GUIStyle(bigStyle) { fontSize = Mathf.RoundToInt(64 * s) }, new Color(1f, 0.85f, 0.3f));
-        ShadowLabel(new Rect(0, 92 * s, W, 40 * s), "o cavalo-anjo de " + p.name, new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(28 * s), fontStyle = FontStyle.Italic }, p.color);
+        ShadowLabel(new Rect(0, 24 * s, W, 70 * s), "ESTÁBULO", Sty(bigStyle, fs: Mathf.RoundToInt(64 * s)), new Color(1f, 0.85f, 0.3f));
+        ShadowLabel(new Rect(0, 92 * s, W, 40 * s), "o cavalo-anjo de " + p.name, Sty(midStyle, fs: Mathf.RoundToInt(28 * s), fst: FontStyle.Italic), p.color);
 
         float pw = Mathf.Min(760 * s, W - 30 * s), rowH = 70 * s, gap = 12 * s;
         float x = W / 2 - pw / 2, y = H - 30 * s - rowH * 3 - gap * 2 - 90 * s;
@@ -100,9 +106,9 @@ public partial class RunnerGame
         {
             var r = new Rect(x, y + i * (rowH + gap), pw, rowH);
             Box(r, dark);
-            ShadowLabel(new Rect(r.x + 90 * s, r.y + 4 * s, r.width - 180 * s, 24 * s), titles[i] + (RunnerTouch.UseTouchUI ? "" : "   [" + keys[i] + "]"), new GUIStyle(cardSmall) { fontSize = Mathf.RoundToInt(17 * s) }, new Color(0.8f, 0.8f, 0.9f));
+            ShadowLabel(new Rect(r.x + 90 * s, r.y + 4 * s, r.width - 180 * s, 24 * s), titles[i] + (RunnerTouch.UseTouchUI ? "" : "   [" + keys[i] + "]"), Sty(cardSmall, fs: Mathf.RoundToInt(17 * s)), new Color(0.8f, 0.8f, 0.9f));
             Color vc = i == 1 ? coat.body : (i == 0 ? p.color : coat.halo);
-            ShadowLabel(new Rect(r.x + 90 * s, r.y + 26 * s, r.width - 180 * s, 40 * s), values[i], new GUIStyle(midStyle) { fontSize = Mathf.RoundToInt(28 * s) }, vc);
+            ShadowLabel(new Rect(r.x + 90 * s, r.y + 26 * s, r.width - 180 * s, 40 * s), values[i], Sty(midStyle, fs: Mathf.RoundToInt(28 * s)), vc);
             int ii = i;
             ActionButton("stb_l" + i, new Rect(r.x + 8 * s, r.y + 8 * s, 70 * s, rowH - 16 * s), "◀", arrow, s, () => StableStep(ii, -1));
             ActionButton("stb_r" + i, new Rect(r.xMax - 78 * s, r.y + 8 * s, 70 * s, rowH - 16 * s), "▶", arrow, s, () => StableStep(ii, 1));

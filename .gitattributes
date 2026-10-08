@@ -1,0 +1,9 @@
+* text=auto
+*.unity merge=unityyamlmerge
+*.prefab merge=unityyamlmerge
+*.png binary
+*.jpg binary
+*.ico binary
+*.mp3 binary
+*.wav binary
+*.ttf binary

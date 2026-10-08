@@ -1,0 +1,44 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+/Screenshots/
+.utmp/
+
+# IDE / gerados
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.tmp
+
+# Builds
+*.apk
+*.aab
+*.unitypackage
+crashlytics-build.properties
+
+# Chaves de assinatura (NUNCA enviar)
+*.keystore
+*.jks
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
